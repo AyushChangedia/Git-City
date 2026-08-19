@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Git City — watch a repository get built, commit by commit</title>
+<meta name="description" content="Paste a GitHub repo URL and watch its history replay as an animated 3D city. Every file is a building, every folder a district.">
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🏙️</text></svg>">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<canvas id="stage"></canvas>
+
+<!-- Source picker -------------------------------------------------------- -->
+<header class="panel" id="source-bar">
+  <h1>Git<span>City</span></h1>
+
+  <label class="field">
+    <span>Demo</span>
+    <select id="preset"></select>
+  </label>
+
+  <label class="field grow">
+    <span>Repo URL</span>
+    <input id="repo-url" type="text" placeholder="https://github.com/owner/name" spellcheck="false" autocomplete="off">
+  </label>
+
+  <label class="field">
+    <span>Token <em>(optional)</em></span>
+    <input id="token" type="password" placeholder="ghp_… raises 60/hr → 5000/hr" spellcheck="false" autocomplete="off">
+  </label>
+
+  <button id="load" class="primary">Build city</button>
+</header>
+
+<!-- Heads-up display ----------------------------------------------------- -->
+<section class="panel" id="hud" hidden>
+  <div class="hud-row">
+    <span class="hud-date" id="hud-date">—</span>
+    <span class="hud-count" id="hud-count">0 / 0</span>
+  </div>
+  <p class="hud-message" id="hud-message">—</p>
+  <p class="hud-author"><span id="hud-author">—</span> · <span id="hud-repo">—</span></p>
+</section>
+
+<!-- Transport ------------------------------------------------------------ -->
+<footer class="panel" id="transport" hidden>
+  <button id="play" class="icon" aria-label="Play / pause" title="Play / pause (space)">▶</button>
+  <input id="scrub" type="range" min="0" max="0" value="0" step="1" aria-label="Timeline">
+  <div class="speeds" role="group" aria-label="Playback speed">
+    <button data-speed="0.5">0.5×</button>
+    <button data-speed="1" class="on">1×</button>
+    <button data-speed="2">2×</button>
+    <button data-speed="4">4×</button>
+  </div>
+</footer>
+
+<!-- Debug ---------------------------------------------------------------- -->
+<aside class="panel" id="debug" hidden>
+  <h2>debug <em>(d)</em></h2>
+  <dl>
+    <dt>fps</dt><dd id="dbg-fps">—</dd>
+    <dt>buildings</dt><dd id="dbg-buildings">—</dd>
+    <dt>districts</dt><dd id="dbg-districts">—</dd>
+    <dt>camera</dt><dd id="dbg-camera">—</dd>
+    <dt>city bbox</dt><dd id="dbg-bbox">—</dd>
+    <dt>ms/commit</dt><dd id="dbg-rate">—</dd>
+  </dl>
+</aside>
+
+<!-- Status / errors — never leave a blank screen ------------------------- -->
+<div id="status" class="status"><div class="status-inner"><p id="status-text">Loading…</p></div></div>
+
+<script type="module" src="js/main.js"></script>
+<noscript>
+  <div class="status"><div class="status-inner">
+    <p><strong>Git City needs JavaScript.</strong> It renders entirely in your browser — there is no server to fall back to.</p>
+  </div></div>
+</noscript>
+</body>
+</html>
