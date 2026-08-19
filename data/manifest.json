@@ -1,0 +1,17 @@
+[
+  {
+    "file": "data/axios-axios.json",
+    "repo": "axios/axios",
+    "label": "axios/axios — 300 commits"
+  },
+  {
+    "file": "data/expressjs-express.json",
+    "repo": "expressjs/express",
+    "label": "expressjs/express — 300 commits"
+  },
+  {
+    "file": "data/sample-demo-repo.json",
+    "repo": "sample/demo-repo",
+    "label": "sample/demo-repo — 120 commits (synthetic)"
+  }
+]
