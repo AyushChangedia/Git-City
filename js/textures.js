@@ -13,7 +13,10 @@ export const WINDOW_TILE_UNITS = 4;
 
 const WINDOW_COLS = 4;
 const WINDOW_ROWS = 4;
-const LIT_FRACTION = 0.45;
+const LIT_FRACTION = 0.5;
+
+/** A minority of windows run cold — fluorescent offices among the warm flats. */
+const COOL_FRACTION = 0.15;
 
 /** Deterministic PRNG, so every reload lights the same windows. */
 function mulberry32(seed) {
@@ -59,10 +62,14 @@ export function makeWindowTexture(size = 256) {
     for (let col = 0; col < WINDOW_COLS; col++) {
       if (rand() > LIT_FRACTION) continue;
 
-      // Vary brightness a little so the facade is not a uniform stipple.
-      const warmth = 0.72 + rand() * 0.28;
-      const v = Math.round(255 * warmth);
-      ctx.fillStyle = `rgb(${v},${Math.round(v * 0.88)},${Math.round(v * 0.68)})`;
+      // Vary brightness a little so the facade is not a uniform stipple, and
+      // let a few windows run cool — a wholly warm skyline looks tinted rather
+      // than lit.
+      const level = 0.72 + rand() * 0.28;
+      const v = Math.round(255 * level);
+      ctx.fillStyle = rand() < COOL_FRACTION
+        ? `rgb(${Math.round(v * 0.66)},${Math.round(v * 0.78)},${v})`   // #a8c8ff family
+        : `rgb(${v},${Math.round(v * 0.85)},${Math.round(v * 0.63)})`;  // #ffd9a0 family
 
       const x = col * cellW + (cellW - winW) / 2;
       const y = row * cellH + (cellH - winH) / 2;
