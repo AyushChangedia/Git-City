@@ -202,14 +202,19 @@ button.icon {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(13, 17, 23, 0.82);
+  background: rgba(13, 17, 23, 0.72);
   backdrop-filter: blur(3px);
   -webkit-backdrop-filter: blur(3px);
+  /* The backdrop must never eat clicks. An error that says "pick a bundled
+     demo" while covering the dropdown is a dead end — only the card itself
+     is interactive. */
+  pointer-events: none;
 }
 .status[hidden] { display: none; }
+.status-inner { pointer-events: auto; }
 
 /* Progress messages let clicks through to the canvas; errors do not. */
-.status.transparent { background: none; backdrop-filter: none; -webkit-backdrop-filter: none; pointer-events: none;
+.status.transparent { background: none; backdrop-filter: none; -webkit-backdrop-filter: none;
   place-items: end center; padding-bottom: 130px; }
 
 .status-inner {
@@ -233,6 +238,12 @@ button.icon {
   border-radius: 4px;
 }
 .status-inner .hint { font-size: 12px; color: var(--muted); }
+
+.status-dismiss {
+  margin-top: 12px;
+  padding: 5px 14px;
+  font-size: 12px;
+}
 
 @media (max-width: 720px) {
   #source-bar { gap: 8px; padding: 8px; }

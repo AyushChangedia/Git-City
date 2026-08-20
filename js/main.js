@@ -17,7 +17,7 @@ import { City } from './city.js';
 import { World } from './world.js';
 import {
   FOV, ELEVATION, DEFAULT_AZIMUTH, MIN_FRAME_DISTANCE,
-  requiredDistance as fitDistance, framing, boxSize, heightForLines,
+  requiredDistance as fitDistance, framing, boxSize,
 } from './layout.js';
 import { Timeline } from './timeline.js';
 import {
@@ -30,9 +30,10 @@ const ORBIT_RAD_PER_SEC = 0.15;
 const FRAME_LERP = 0.06;
 const MANIFEST_URL = 'data/manifest.json';
 
-const BLOOM_STRENGTH = 0.7;
-const BLOOM_RADIUS = 0.4;
-const BLOOM_THRESHOLD = 0.82;
+// The reference photographs are heavy with glow, so this errs bright.
+const BLOOM_STRENGTH = 0.9;
+const BLOOM_RADIUS = 0.5;
+const BLOOM_THRESHOLD = 0.72;
 
 const CAMERA_FAR = 30000;   // the sky box and the ocean both live out here
 
@@ -60,6 +61,7 @@ const el = {
   dbgDistricts: $('dbg-districts'),
   dbgCalls: $('dbg-calls'),
   dbgTris: $('dbg-tris'),
+  dbgFiller: $('dbg-filler'),
   dbgCamera: $('dbg-camera'),
   dbgBbox: $('dbg-bbox'),
   dbgRate: $('dbg-rate'),
@@ -90,6 +92,15 @@ function showStatus(message, { error = false, hint = '', transparent = false } =
     inner.appendChild(h);
   }
 
+  // Errors stay until dismissed, so there is always a way back to the demos.
+  if (error) {
+    const dismiss = document.createElement('button');
+    dismiss.className = 'status-dismiss';
+    dismiss.textContent = 'Dismiss';
+    dismiss.addEventListener('click', hideStatus);
+    inner.appendChild(dismiss);
+  }
+
   el.status.replaceChildren(inner);
   el.status.classList.toggle('error', error);
   el.status.classList.toggle('transparent', transparent && !error);
@@ -108,7 +119,7 @@ const renderer = new THREE.WebGLRenderer({
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.65;
+renderer.toneMappingExposure = 0.55;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -194,6 +205,7 @@ function frameCity({ azimuth = DEFAULT_AZIMUTH } = {}) {
   }
 
   applyClipPlanes();
+  world.setHaze(frameDistance);
   controls.update();
 }
 
@@ -224,6 +236,7 @@ function refitIfOutgrown() {
   if (need > frameDistance) {
     frameDistance = need;
     applyClipPlanes();
+    world.setHaze(frameDistance);
   }
 }
 
@@ -341,31 +354,17 @@ function formatDate(iso) {
 
 /* --------------------------------------------------------- data loading -- */
 
-/**
- * The tallest building the dataset will ever produce.
- *
- * The shadow camera and the island are fitted once, up front, and a city whose
- * buildings are all still at zero height would size both of them to nothing.
- */
-function plannedHeight(commits) {
-  let lines = 0;
-  for (const commit of commits) {
-    for (const file of commit.files || []) {
-      if (file.status !== 'removed' && file.lines > lines) lines = file.lines;
-    }
-  }
-  return heightForLines(lines);
-}
-
 async function useDataset(next) {
   dataset = next;
   city.clear();
   city.planFor(next.commits);
 
-  // Fit the environment to the finished city, not to the empty one.
+  // Fit the environment to the finished city, not to the empty one: at load
+  // every building is still at zero height, and sizing the land and the shadow
+  // camera to that would leave both far too small.
   const box = city.bounds();
-  if (box) box.max.y = Math.max(box.max.y, plannedHeight(next.commits));
-  world.rebuild(box, city.plan.districts, city.plan.positions);
+  if (box) box.max.y = Math.max(box.max.y, city.plannedHeight(next.commits));
+  world.rebuild(box, city.plan);
 
   timeline.load(next.commits);
   el.hud.hidden = false;
@@ -537,6 +536,7 @@ function updateDebug() {
   el.dbgDistricts.textContent = String(city.districtCount);
   el.dbgCalls.textContent = String(info.calls);
   el.dbgTris.textContent = info.triangles.toLocaleString();
+  el.dbgFiller.textContent = (world.fillerCount || 0).toLocaleString();
   el.dbgCamera.textContent = `${f(camera.position.x)}, ${f(camera.position.y)}, ${f(camera.position.z)}`;
   el.dbgBbox.textContent = `${f(size.x)} × ${f(size.y)} × ${f(size.z)}`;
   el.dbgRate.textContent = `${Math.round(timeline.msPerCommit)} @ ${timeline.speed}×`;
