@@ -1,17 +1,23 @@
 /**
  * main.js — bootstrap and wiring.
  *
- * Owns the three.js scene, the camera framing rules, and every DOM listener.
- * City geometry lives in city.js, playback in timeline.js, data in github.js.
+ * Owns the renderer, the post-processing chain, the camera framing rules and
+ * every DOM listener. Geometry maths lives in layout.js, meshes in city.js, the
+ * environment in world.js, playback in timeline.js, data in github.js.
  */
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 import { City } from './city.js';
+import { World } from './world.js';
 import {
-  PITCH, FOV, ELEVATION, DEFAULT_AZIMUTH,
-  requiredDistance as fitDistance, framing, boxSize,
+  FOV, ELEVATION, DEFAULT_AZIMUTH, MIN_FRAME_DISTANCE,
+  requiredDistance as fitDistance, framing, boxSize, heightForLines,
 } from './layout.js';
 import { Timeline } from './timeline.js';
 import {
@@ -20,10 +26,15 @@ import {
 
 /* ----------------------------------------------------------- constants -- */
 
-const BACKGROUND = 0x0d1117;
 const ORBIT_RAD_PER_SEC = 0.15;
-const FRAME_LERP = 0.06;                   // how fast the camera eases to a new fit
+const FRAME_LERP = 0.06;
 const MANIFEST_URL = 'data/manifest.json';
+
+const BLOOM_STRENGTH = 0.7;
+const BLOOM_RADIUS = 0.4;
+const BLOOM_THRESHOLD = 0.82;
+
+const CAMERA_FAR = 30000;   // the sky box and the ocean both live out here
 
 /* ------------------------------------------------------------------ dom -- */
 
@@ -47,6 +58,8 @@ const el = {
   dbgFps: $('dbg-fps'),
   dbgBuildings: $('dbg-buildings'),
   dbgDistricts: $('dbg-districts'),
+  dbgCalls: $('dbg-calls'),
+  dbgTris: $('dbg-tris'),
   dbgCamera: $('dbg-camera'),
   dbgBbox: $('dbg-bbox'),
   dbgRate: $('dbg-rate'),
@@ -93,72 +106,61 @@ const renderer = new THREE.WebGLRenderer({
   powerPreference: 'high-performance',
 });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.65;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+// Shadows are re-rendered on demand rather than every frame — see requestShadowUpdate().
+renderer.shadowMap.autoUpdate = false;
+
+// Post-processing renders several passes per frame and each one resets the
+// counters, so accumulate them by hand and reset once at the top of the frame.
+renderer.info.autoReset = false;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(BACKGROUND);
 
-const camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 20000);
-camera.position.set(60, 60, 60);
+const camera = new THREE.PerspectiveCamera(FOV, 1, 1, CAMERA_FAR);
+camera.position.set(120, 80, 120);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
-controls.maxPolarAngle = Math.PI / 2 - 0.02;   // never dip below the ground
+controls.maxPolarAngle = Math.PI / 2 - 0.02;   // never dip below the waterline
 controls.minDistance = 5;
 controls.maxDistance = 12000;
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-scene.add(new THREE.HemisphereLight(0xbcd4ff, 0x1a1f27, 0.75));
-
-const sun = new THREE.DirectionalLight(0xffffff, 1.15);
-sun.position.set(1, 2, 1);
-scene.add(sun);
-
+const world = new World(scene, renderer);
 const city = new City();
 scene.add(city.group);
 
-// Ground: a dark slab plus a GridHelper. The grid is a diagnostic — grid but no
-// buildings means the data is wrong; nothing at all means the camera is wrong.
-const ground = new THREE.Mesh(
-  new THREE.PlaneGeometry(1, 1),
-  new THREE.MeshBasicMaterial({ color: 0x11161d })
+/* ------------------------------------------------------ post-processing -- */
+
+// HDR buffer: bloom has to see values above 1 to have anything to bloom, and
+// the renderer skips tone mapping when drawing into a render target, so the
+// chain ends with an OutputPass that tone maps and converts to sRGB.
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, {
+  type: THREE.HalfFloatType,
+  samples: 4,
+}));
+composer.addPass(new RenderPass(scene, camera));
+
+const bloomPass = new UnrealBloomPass(
+  new THREE.Vector2(1, 1), BLOOM_STRENGTH, BLOOM_RADIUS, BLOOM_THRESHOLD
 );
-ground.rotation.x = -Math.PI / 2;
-ground.position.y = -0.02;
-scene.add(ground);
-
-let grid = null;
-let gridSize = 0;
-
-/** Grid divisions land on the building pitch, so cells line up with the blocks. */
-function ensureGround(size) {
-  const wanted = Math.max(60, Math.ceil((size * 1.25) / PITCH) * PITCH);
-  if (grid && wanted <= gridSize) return;
-  gridSize = wanted;
-
-  if (grid) {
-    scene.remove(grid);
-    grid.geometry.dispose();
-    grid.material.dispose();
-  }
-  grid = new THREE.GridHelper(gridSize, Math.round(gridSize / PITCH), 0x2b3440, 0x1d242e);
-  grid.position.y = 0;
-  scene.add(grid);
-
-  ground.scale.set(gridSize, gridSize, 1);
-}
-ensureGround(60);
+composer.addPass(bloomPass);
+composer.addPass(new OutputPass());
 
 /* --------------------------------------------------------------- camera -- */
 
 const frameTarget = new THREE.Vector3();
-let frameDistance = 120;
+let frameDistance = MIN_FRAME_DISTANCE;
 let userInteracting = false;
 let lastInteraction = -Infinity;
 
 const _vec = new THREE.Vector3();
 
-/** Fit distance for the city as it stands, at the window's current aspect. */
 function distanceFor(box) {
   return fitDistance(box, camera.aspect);
 }
@@ -166,17 +168,17 @@ function distanceFor(box) {
 /**
  * Snap the camera to fit the city right now.
  *
- * Nothing here is hardcoded: the position falls out of the bounding box, a
- * 45-degree elevation and the fov. An empty city gets a sane default so the
- * ground grid is still visible — if you can see the grid but no buildings the
- * problem is the data, not the camera.
+ * Nothing here is hardcoded: the position falls out of the bounding box, the
+ * elevation and the fov. Because the city is planned in full at load, the box
+ * is the finished footprint from the first frame, so the framing does not
+ * lurch around as buildings appear.
  */
 function frameCity({ azimuth = DEFAULT_AZIMUTH } = {}) {
   const box = city.bounds();
 
   if (!box) {
     frameTarget.set(0, 0, 0);
-    frameDistance = 120;
+    frameDistance = MIN_FRAME_DISTANCE;
     controls.target.copy(frameTarget);
     camera.position.set(
       Math.cos(azimuth) * Math.cos(ELEVATION) * frameDistance,
@@ -193,20 +195,17 @@ function frameCity({ azimuth = DEFAULT_AZIMUTH } = {}) {
 
   applyClipPlanes();
   controls.update();
-  ensureGroundFor(box);
 }
 
+/**
+ * The near plane is tied to the framing distance: too tight and the road
+ * markings z-fight with the road, too loose and zooming in clips the city.
+ * The far plane is fixed because the sky and the ocean are always out there.
+ */
 function applyClipPlanes() {
-  // Tie the clip planes to the fit distance: a fixed far plane wrecks depth
-  // precision on a small city and clips a large one.
-  camera.near = Math.max(0.1, frameDistance / 1000);
-  camera.far = Math.max(1000, frameDistance * 12);
+  camera.near = Math.max(1, frameDistance / 200);
+  camera.far = CAMERA_FAR;
   camera.updateProjectionMatrix();
-}
-
-function ensureGroundFor(box) {
-  const size = box ? boxSize(box) : { x: 60, z: 60 };
-  ensureGround(Math.max(size.x, size.z, 60));
 }
 
 /**
@@ -218,14 +217,14 @@ function refitIfOutgrown() {
   const box = city.bounds();
   if (!box) return;
 
-  const center = framing(box, camera.aspect).target;
-  frameTarget.set(center.x, center.y, center.z);
+  const centre = framing(box, camera.aspect).target;
+  frameTarget.set(centre.x, centre.y, centre.z);
 
   const need = distanceFor(box);
-  if (need > frameDistance) frameDistance = need;
-
-  applyClipPlanes();
-  ensureGroundFor(box);
+  if (need > frameDistance) {
+    frameDistance = need;
+    applyClipPlanes();
+  }
 }
 
 function updateCamera(dtSeconds) {
@@ -271,13 +270,27 @@ function resize() {
   const w = window.innerWidth;
   const h = window.innerHeight;
   renderer.setSize(w, h, false);
+  composer.setSize(w, h);
+  composer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   // A narrower window needs more distance for the same city.
   refitIfOutgrown();
+  requestShadowUpdate();
 }
 window.addEventListener('resize', resize);
-resize();
+
+/* -------------------------------------------------------------- shadows -- */
+
+/**
+ * Shadow maps are expensive and the sun never moves, so they are only redrawn
+ * when the geometry casting them actually changes: a building appearing or
+ * being demolished, and once more when the growth animation settles so the
+ * final heights are correct. Not every frame.
+ */
+function requestShadowUpdate() {
+  renderer.shadowMap.needsUpdate = true;
+}
 
 /* -------------------------------------------------------------- playback -- */
 
@@ -285,14 +298,14 @@ let dataset = null;
 
 const timeline = new Timeline({
   onCommit: (commit, index) => {
-    city.applyCommit(commit, index, false);
+    if (city.applyCommit(commit, index, false)) requestShadowUpdate();
     refitIfOutgrown();
   },
   onSeek: (index) => {
     if (!dataset) return;
     city.seek(dataset.commits, index);
-    if (index < 0) frameCity();
-    else refitIfOutgrown();
+    refitIfOutgrown();
+    requestShadowUpdate();
   },
   onChange: updateUI,
 });
@@ -326,18 +339,41 @@ function formatDate(iso) {
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-/* ------------------------------------------------------------ data loading -- */
+/* --------------------------------------------------------- data loading -- */
+
+/**
+ * The tallest building the dataset will ever produce.
+ *
+ * The shadow camera and the island are fitted once, up front, and a city whose
+ * buildings are all still at zero height would size both of them to nothing.
+ */
+function plannedHeight(commits) {
+  let lines = 0;
+  for (const commit of commits) {
+    for (const file of commit.files || []) {
+      if (file.status !== 'removed' && file.lines > lines) lines = file.lines;
+    }
+  }
+  return heightForLines(lines);
+}
 
 async function useDataset(next) {
   dataset = next;
   city.clear();
-  timeline.load(next.commits);
+  city.planFor(next.commits);
 
+  // Fit the environment to the finished city, not to the empty one.
+  const box = city.bounds();
+  if (box) box.max.y = Math.max(box.max.y, plannedHeight(next.commits));
+  world.rebuild(box, city.plan.districts, city.plan.positions);
+
+  timeline.load(next.commits);
   el.hud.hidden = false;
   el.transport.hidden = false;
 
   timeline.seek(0);
   frameCity();
+  requestShadowUpdate();
   hideStatus();
   timeline.play();
 }
@@ -458,6 +494,7 @@ let lastFrame = performance.now();
 let fpsAccum = 0;
 let fpsFrames = 0;
 let fps = 0;
+let wasAnimating = false;
 
 function tick(now) {
   requestAnimationFrame(tick);
@@ -466,7 +503,14 @@ function tick(now) {
   lastFrame = now;
 
   timeline.tick(dtMs);
-  city.update(now);
+
+  const animating = city.update(now);
+  // One last shadow pass when the city stops moving, so the resting heights
+  // cast the right shadows.
+  if (wasAnimating && !animating) requestShadowUpdate();
+  wasAnimating = animating;
+
+  world.update(dtMs / 1000);
   updateCamera(dtMs / 1000);
 
   fpsAccum += dtMs;
@@ -478,17 +522,21 @@ function tick(now) {
     if (!el.debug.hidden) updateDebug();
   }
 
-  renderer.render(scene, camera);
+  renderer.info.reset();
+  composer.render();
 }
 
 function updateDebug() {
   const box = city.bounds();
   const size = box ? boxSize(box) : { x: 0, y: 0, z: 0 };
   const f = (n) => n.toFixed(1);
+  const info = renderer.info.render;
 
   el.dbgFps.textContent = String(fps);
   el.dbgBuildings.textContent = String(city.buildingCount);
   el.dbgDistricts.textContent = String(city.districtCount);
+  el.dbgCalls.textContent = String(info.calls);
+  el.dbgTris.textContent = info.triangles.toLocaleString();
   el.dbgCamera.textContent = `${f(camera.position.x)}, ${f(camera.position.y)}, ${f(camera.position.z)}`;
   el.dbgBbox.textContent = `${f(size.x)} × ${f(size.y)} × ${f(size.z)}`;
   el.dbgRate.textContent = `${Math.round(timeline.msPerCommit)} @ ${timeline.speed}×`;
@@ -497,6 +545,7 @@ function updateDebug() {
 /* ----------------------------------------------------------------- boot -- */
 
 (async function boot() {
+  resize();
   requestAnimationFrame(tick);
   showStatus('Loading…', { transparent: true });
 
@@ -518,4 +567,7 @@ function updateDebug() {
 })();
 
 // Handy for poking at the city from the console.
-window.gitCity = { three: THREE, city, timeline, camera, controls, scene, frameCity, get dataset() { return dataset; } };
+window.gitCity = {
+  three: THREE, city, world, timeline, camera, controls, scene, renderer, composer,
+  frameCity, get dataset() { return dataset; },
+};
