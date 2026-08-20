@@ -3,11 +3,12 @@
 **Paste a GitHub repo URL and watch its history build itself, commit by commit, as a 3D city.**
 
 Every file is a building. Every folder is a district. A building's height is its
-line count, and it glows orange the moment a commit touches it, cooling back to
-slate over the next twenty commits. Play it back and you can see a codebase
-grow, sprawl, get refactored, and lose whole neighbourhoods to a delete.
+line count, its windows light up at dusk, and it glows orange the moment a
+commit touches it, cooling back to slate over the next twenty commits. Play it
+back and you can see a codebase grow, sprawl, get refactored, and lose whole
+neighbourhoods to a delete.
 
-![Git City rendering the last 300 commits of axios/axios](docs/screenshot.png)
+![Git City at dusk: a lit island city, sun low over the water, long shadows across the ground](docs/screenshot.png)
 
 > **Demo GIF placeholder** — drop a recording at `docs/demo.gif` and swap the
 > image above for `![Git City](docs/demo.gif)`.
@@ -26,13 +27,15 @@ no backend, no install.
 - **Roughly 45 seconds** of playback regardless of repo size, scrubbable, at
   0.5×–4× speed.
 - **Everything runs in the browser.** No server, no bundler, no framework.
+- **Rendered at sunset** on an island: physical sky, real water, long shadows,
+  lit windows and bloom — see [Look and lighting](#look-and-lighting).
 
 ## Controls
 
 | | |
 |---|---|
 | `space` | play / pause |
-| `d` | toggle the debug panel (FPS, building count, camera, bounding box) |
+| `d` | toggle the debug panel (FPS, draw calls, triangles, camera, bounding box) |
 | drag | orbit — this also pauses the slow auto-orbit |
 | scroll | zoom |
 | scrubber | jump anywhere in history |
@@ -51,7 +54,8 @@ One building per file path, standing on the ground plane at `y = 0`.
 ```
 footprint      4 x 4 units, 2 unit gap  ->  6 unit pitch
 height         clamp(lines / 20, 1, 40)
-colour         #ff6b35 when just touched, lerping to #4a5568 over 20 commits
+colour         #4a5568, tinted 55% towards #ff6b35 when just touched,
+               cooling back over 20 commits
 ```
 
 Growth, height changes and demolition all animate over 300ms with an ease-out
@@ -66,10 +70,42 @@ of `ceil(sqrt(n))` columns. Districts are then laid out in their own grid,
 largest first, with 10 units of padding between them, and the whole city is
 centred on the origin.
 
-Because the layout is a pure function of the current path set, it is recomputed
-from scratch whenever a file appears or disappears — and buildings slide to
-their new spots over 300ms, so the city visibly rearranges itself instead of
-teleporting.
+The layout is computed once per dataset over **every path the history will ever
+contain**, not just the files that exist at the current commit. Two things fall
+out of that: each file keeps one plot for the whole run, so nothing shuffles
+around underfoot; and every plot can be plated with a dark foundation slab from
+frame 0, so buildings rise out of a city that already has a street plan instead
+of appearing in an empty void.
+
+### Look and lighting
+
+The scene is lit by a single sun vector, computed once at 3° elevation and 175°
+azimuth and shared by the sky shader, the directional light and the water's
+specular highlight. If those three disagree the image reads as wrong without it
+being obvious why, so there is exactly one of them.
+
+| | |
+|---|---|
+| sky | `Sky` — turbidity 10, rayleigh 3, mie 0.005 / 0.8 |
+| sun | directional `#ffb27a` at 3.5, shadow camera fitted to the city in light space, 2048² map |
+| fill | hemisphere `#ff9d5c` over `#1a1a2e` at 0.5 |
+| water | `Water`, 10000², `#07131f`, distortion 3.7, normals committed to `assets/` |
+| ground | island sized to the city plus 60 units, roads in the district gaps, streetlights every 25 units |
+| air | `FogExp2` matched to the rendered horizon colour |
+| output | ACES filmic, exposure 0.65, then `UnrealBloomPass` at 0.7 / 0.4 / 0.82 |
+
+**Windows** are the detail that stops the buildings reading as bars on a chart.
+A canvas texture — a dark tile with a grid of small rectangles, 45% of them lit
+from a seeded PRNG — drives the emissive channel, and its vertical repeat is set
+from each building's height so window rows stay the same physical size on a
+two-storey file and a forty-unit tower. A shader patch keeps the windows off the
+roofs without splitting every building across two materials, which would double
+the draw calls.
+
+Bloom thresholds on **linear** radiance, before tone mapping, which is worth
+knowing before picking emissive values: `#ffd9a0` has a linear luminance of
+0.734, so the obvious `emissiveIntensity: 0.9` peaks at 0.66 and never crosses
+the 0.82 threshold. The windows run at 1.6.
 
 ### The camera
 
@@ -82,19 +118,32 @@ The camera position is **never hardcoded**. After each layout:
 3. Bisect for the smallest distance at which every point on that cylinder still
    projects inside the frustum, with a 20% margin, checking **both** fields of
    view (on a portrait window the horizontal one binds).
-4. Place the camera at 45° elevation, point `OrbitControls` at the box centre,
-   with damping on.
+4. Place the camera at 28° elevation, aimed 5° above the city centre, with
+   `OrbitControls` damping on.
 
-As the city grows the framing is recomputed and the camera eases outward. It
-only ever pulls back, never in, so a deliberate zoom is not undone a frame
-later. While playing, the camera auto-orbits at 0.15 rad/sec, which suspends
-while you are dragging.
+That 5° tilt is measured rather than chosen: at 28° elevation with a 55° field
+of view the horizon lands within half a degree of the top of the frame, so a
+camera pointed straight at the city shows no sky at all. The near edge of the
+city is what binds the fit, so each degree of tilt costs about 5% more distance
+to buy about 2% of frame height as sky. Five degrees is the knee of that curve.
 
-A `GridHelper` on the ground is deliberately load-bearing as a diagnostic:
+Framing is never closer than 170 units, so a barely-started city is viewed from
+far enough back to look deliberate. As the city grows the framing is recomputed
+and the camera eases outward — only ever back, never in, so a deliberate zoom is
+not undone a frame later. While playing, the camera auto-orbits at 0.15 rad/sec,
+which suspends while you are dragging.
 
-- Grid **and** buildings → working.
-- Grid but **no buildings** → the data is wrong.
-- **Nothing at all** → the camera is wrong.
+### Performance
+
+Shadows are the expensive part, and the sun never moves, so shadow maps are not
+redrawn every frame: `shadowMap.autoUpdate` is off, and an update is requested
+when a building is added or removed, and once more when the growth animation
+settles so the resting heights cast the right shadows. Between those, the
+existing map is reused.
+
+The debug panel (`d`) reports FPS, draw calls and triangle count alongside the
+city stats, which is the fastest way to tell a geometry problem from a fill-rate
+one.
 
 ---
 
@@ -244,11 +293,14 @@ does not interfere.
 ```
 index.html                 markup + the three.js import map
 css/style.css              all styling
-js/main.js                 bootstrap, scene, camera framing, DOM wiring
+js/main.js                 bootstrap, renderer, post-processing, camera, DOM wiring
 js/layout.js               pure geometry — districts, positions, camera fit
-js/city.js                 meshes, tweens, building lifecycle
+js/city.js                 building meshes, materials, tweens, lifecycle
+js/world.js                sun, sky, water, island, roads, streetlights, fog
+js/textures.js             canvas-generated window and water-normal textures
 js/timeline.js             playback state machine
 js/github.js               dataset loading, live API, rate-limit handling
+assets/waternormals.jpg    water normal map (three.js, MIT) — committed, not hotlinked
 data/*.json                pre-generated commit data
 data/manifest.json         which datasets appear in the dropdown
 scripts/fetch-history.js   dataset generator
