@@ -2,13 +2,14 @@
 
 **Paste a GitHub repo URL and watch its history build itself, commit by commit, as a 3D city.**
 
-Every file is a building. Every folder is a district. A building's height is its
-line count, its windows light up at dusk, and it glows orange the moment a
-commit touches it, cooling back to slate over the next twenty commits. Play it
-back and you can see a codebase grow, sprawl, get refactored, and lose whole
-neighbourhoods to a delete.
+Every file is a building. Every folder is a district. Top-level folders sit on
+opposite banks of a river. A building's height is its line count, its windows
+light up at dusk, and it glows orange the moment a commit touches it, cooling
+back to slate over the next twenty commits. Play it back and you can see a
+codebase grow, sprawl, get refactored, and lose whole neighbourhoods to a
+delete.
 
-![Git City at dusk: a lit island city, sun low over the water, long shadows across the ground](docs/screenshot.png)
+![Git City at dusk: the axios repository as a river city, windows lit, haze on the horizon](docs/screenshot.png)
 
 > **Demo GIF placeholder** — drop a recording at `docs/demo.gif` and swap the
 > image above for `![Git City](docs/demo.gif)`.
@@ -35,7 +36,7 @@ no backend, no install.
 | | |
 |---|---|
 | `space` | play / pause |
-| `d` | toggle the debug panel (FPS, draw calls, triangles, camera, bounding box) |
+| `d` | toggle the debug panel (FPS, draw calls, triangles, filler count, camera, bounding box) |
 | drag | orbit — this also pauses the slow auto-orbit |
 | scroll | zoom |
 | scrubber | jump anywhere in history |
@@ -49,63 +50,103 @@ a dataset.
 
 ### Buildings
 
-One building per file path, standing on the ground plane at `y = 0`.
+One building per file path, standing on the ground at `y = 0`.
 
 ```
-footprint      4 x 4 units, 2 unit gap  ->  6 unit pitch
-height         clamp(lines / 20, 1, 40)
-colour         #4a5568, tinted 55% towards #ff6b35 when just touched,
+footprint      3 x 3 units, 1 unit gap  ->  4 unit pitch
+height         clamp(lines / 12, 2, 70)
+colour         #4a5568, tinted 45% towards #ff6b35 when just touched,
                cooling back over 20 commits
 ```
 
+Anything over 30 units is built as three stacked boxes, each 85% the width of
+the one below — a setback taper. A single extruded box is a bar on a chart at
+any size; a taper is a tower. Mid-rise buildings get a little deterministic
+rooftop clutter, and the three tallest files in the whole history carry a spire
+with a red aircraft-warning light.
+
 Growth, height changes and demolition all animate over 300ms with an ease-out
-cubic. A removed file sinks to zero and is then disposed of properly — geometry
-is shared across every building, materials are per-building and released on
-removal.
+cubic. The segments are re-laid every frame of the tween rather than the group
+being scaled, so the setbacks keep their proportions and the window rows keep
+their physical size the whole way up.
 
-### Districts
+### Districts and the river
 
-Files are grouped by their folder. Inside a district, buildings pack into a grid
-of `ceil(sqrt(n))` columns. Districts are then laid out in their own grid,
-largest first, with 10 units of padding between them, and the whole city is
-centred on the origin.
+Files are grouped by folder. Inside a district, buildings pack into a grid of
+`ceil(sqrt(n))` columns.
+
+Top-level folders are then dealt alternately onto two banks, largest first, so
+neither side swallows the repository. Each bank packs its districts into a grid
+that is deliberately twice as wide as a square packing would be, so it spreads
+along the water instead of retreating from it, and row 0 fronts the channel.
+The river is 90 units across, with an embankment lip on each side.
 
 The layout is computed once per dataset over **every path the history will ever
-contain**, not just the files that exist at the current commit. Two things fall
-out of that: each file keeps one plot for the whole run, so nothing shuffles
-around underfoot; and every plot can be plated with a dark foundation slab from
-frame 0, so buildings rise out of a city that already has a street plan instead
-of appearing in an empty void.
+contain**, not just the files that exist at the current commit. Each file keeps
+one plot for the whole run, and every plot is plated with a dark foundation slab
+from frame 0 — so buildings rise out of a city that already has a street plan
+rather than appearing in an empty void.
+
+### The filler skyline is not your repository
+
+Roughly 3000 background buildings fill the horizon on both banks. **None of them
+mean anything.** Not one is a file, a commit or a line of code. They exist
+because a real skyline does not stop at the edge of the interesting part, and a
+data city floating alone on an empty plane reads as a diagram.
+
+They are placed outside a moat around the data city, weighted heavily towards
+short, and the haze eats most of them. The data city is the one picked out by
+streetlights and traffic. If you are reading the horizon for meaning, don't —
+read the lit part in the middle. They are a single `InstancedMesh`, so all 3000
+cost one draw call.
+
+Traffic is the same: headlights and tail lights running the streets carry no
+data either. A still city reads as a model; a moving one reads as a place.
 
 ### Look and lighting
 
-The scene is lit by a single sun vector, computed once at 3° elevation and 175°
+The scene is lit by a single sun vector, computed once at 2° elevation and 175°
 azimuth and shared by the sky shader, the directional light and the water's
 specular highlight. If those three disagree the image reads as wrong without it
 being obvious why, so there is exactly one of them.
 
 | | |
 |---|---|
-| sky | `Sky` — turbidity 10, rayleigh 3, mie 0.005 / 0.8 |
-| sun | directional `#ffb27a` at 3.5, shadow camera fitted to the city in light space, 2048² map |
-| fill | hemisphere `#ff9d5c` over `#1a1a2e` at 0.5 |
-| water | `Water`, 10000², `#07131f`, distortion 3.7, normals committed to `assets/` |
-| ground | island sized to the city plus 60 units, roads in the district gaps, streetlights every 25 units |
-| air | `FogExp2` matched to the rendered horizon colour |
-| output | ACES filmic, exposure 0.65, then `UnrealBloomPass` at 0.7 / 0.4 / 0.82 |
+| sky | `Sky` — turbidity 8, rayleigh 2.5, mie 0.005 / 0.85 |
+| sun | directional `#ffa06a` at 3, shadow camera fitted to the **data city** in light space, 2048² map |
+| fill | hemisphere `#ffb088` over `#1a1428` at 0.6 |
+| water | `Water`, 10000², `#0a1520`, distortion 2.5, normals committed to `assets/` |
+| ground | two banks, roads in the district gaps, streetlights every 25 units, moving traffic |
+| air | `FogExp2` in `#d8a8b8`, density solved per city — see below |
+| output | ACES filmic, exposure 0.55, then `UnrealBloomPass` at 0.9 / 0.5 / 0.72 |
 
-**Windows** are the detail that stops the buildings reading as bars on a chart.
-A canvas texture — a dark tile with a grid of small rectangles, 45% of them lit
-from a seeded PRNG — drives the emissive channel, and its vertical repeat is set
-from each building's height so window rows stay the same physical size on a
-two-storey file and a forty-unit tower. A shader patch keeps the windows off the
-roofs without splitting every building across two materials, which would double
-the draw calls.
+**Windows** are the detail that stops the buildings reading as bars. A canvas
+texture — a dark tile with a grid of small rectangles, half of them lit from a
+seeded PRNG, most warm and about 15% cool — drives the emissive channel, and its
+repeat is set from each building's height so window rows stay the same physical
+size on a two-storey file and a seventy-unit tower. A shader patch keeps the
+windows off the roofs without splitting every building across two materials,
+which would double the draw calls. The filler carries a per-instance UV scale
+through the same trick, so 3000 background buildings get correct window rows
+from one draw call.
 
 Bloom thresholds on **linear** radiance, before tone mapping, which is worth
 knowing before picking emissive values: `#ffd9a0` has a linear luminance of
-0.734, so the obvious `emissiveIntensity: 0.9` peaks at 0.66 and never crosses
-the 0.82 threshold. The windows run at 1.6.
+0.734, so anything below `emissiveIntensity` ≈ 0.98 never crosses the 0.72
+threshold and never glows at all.
+
+**Haze** is specified as a density, but the density that looks right depends on
+how far back the camera is standing — and that is derived from the size of the
+repository, not chosen. A fixed density puts a thin veil on a small city and an
+opaque wall on a large one. So what is held constant here is the veil over the
+*subject* (15%), and the density is solved for each city from
+`1 - exp(-(density·d)²)`. At the minimum framing distance this works out to
+0.0018; a sprawling repo framed from further back gets proportionally thinner
+haze, and the horizon still washes out because it is still far away.
+
+The fog colour is matched to what the sky actually renders at the horizon,
+sampled from a frame rather than picked by eye. Fog darker than the horizon
+makes distant geometry stand out against the sky instead of dissolving into it.
 
 ### The camera
 
@@ -118,16 +159,20 @@ The camera position is **never hardcoded**. After each layout:
 3. Bisect for the smallest distance at which every point on that cylinder still
    projects inside the frustum, with a 20% margin, checking **both** fields of
    view (on a portrait window the horizontal one binds).
-4. Place the camera at 28° elevation, aimed 5° above the city centre, with
+4. Place the camera at 18° elevation, aimed 7° above the city centre, with
    `OrbitControls` damping on.
 
-That 5° tilt is measured rather than chosen: at 28° elevation with a 55° field
-of view the horizon lands within half a degree of the top of the frame, so a
-camera pointed straight at the city shows no sky at all. The near edge of the
-city is what binds the fit, so each degree of tilt costs about 5% more distance
-to buy about 2% of frame height as sky. Five degrees is the knee of that curve.
+The 18° elevation is what makes it a skyline rather than a floor plan: low
+enough that towers overlap and occlude each other. The 7° tilt is measured, not
+chosen — it puts the horizon in the upper third of the frame, and since the near
+edge of the city is what binds the fit, each degree of tilt costs distance.
 
-Framing is never closer than 170 units, so a barely-started city is viewed from
+The starting azimuth is not a free choice either. The sun sits at azimuth 175,
+so a camera on the wrong side looks at the dull grey-green anti-solar horizon
+with all the colour behind it. 135° keeps the sun just off the frame edge — glow
+without a blown-out disc — and sets the river running corner to corner.
+
+Framing is never closer than 220 units, so a barely-started city is viewed from
 far enough back to look deliberate. As the city grows the framing is recomputed
 and the camera eases outward — only ever back, never in, so a deliberate zoom is
 not undone a frame later. While playing, the camera auto-orbits at 0.15 rad/sec,
@@ -138,12 +183,13 @@ which suspends while you are dragging.
 Shadows are the expensive part, and the sun never moves, so shadow maps are not
 redrawn every frame: `shadowMap.autoUpdate` is off, and an update is requested
 when a building is added or removed, and once more when the growth animation
-settles so the resting heights cast the right shadows. Between those, the
-existing map is reused.
+settles so the resting heights cast the right shadows. The filler city casts no
+shadows at all — it is scenery, and spending the shadow budget on 3000 buildings
+nobody reads would be a poor trade. Pixel ratio is capped at 2.
 
-The debug panel (`d`) reports FPS, draw calls and triangle count alongside the
-city stats, which is the fastest way to tell a geometry problem from a fill-rate
-one.
+The debug panel (`d`) reports FPS, draw calls, triangle count and filler count
+alongside the city stats, which is the fastest way to tell a geometry problem
+from a fill-rate one.
 
 ---
 
@@ -256,15 +302,18 @@ axios/axios   (data/axios-axios.json)
   commits            300
   buildings (final)  334
   districts          59
+  banks              bank 0: 37 districts, 227.0 x 79.0
+                     bank 1: 22 districts, 161.0 x 62.0
+  river channel      90 units wide
 
-  building height    min 1.0   median 5.6   max 40.0
+  building height    min 2.0   median 9.3   max 70.0
   largest district   docs/es/pages/advanced (25 files, 5x5)
 
-  city bbox          282.0 wide x 40.0 tall x 150.0 deep
-  camera position    195.9, 297.0, 195.9
-  camera distance    391.7  (fov 55, 45° elevation, 20% margin, aspect 1.78)
+  city bbox          227.0 wide x 70.0 tall x 231.0 deep
+  camera position    -332.3, 187.7, 323.8
+  camera distance    494.2  (fov 48, 18° elevation, 20% margin, aspect 1.78)
 
-  scale check        footprint 282.0 units — OK
+  scale check        footprint 231.0 units — OK
 ```
 
 It exits non-zero if a city's footprint falls outside 20–5000 units, which is
