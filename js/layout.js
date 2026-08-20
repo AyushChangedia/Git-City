@@ -116,8 +116,42 @@ export function layout(paths) {
 
 export const FOV = 55;
 export const MARGIN = 1.2;                 // 20% breathing room
-export const ELEVATION = Math.PI / 4;      // 45 degrees
+
+/**
+ * 28 degrees rather than a top-down 45: low enough to read as a skyline with
+ * the towers overlapping each other, which is what makes it look like a city
+ * seen from somewhere rather than a chart seen from above.
+ */
+export const ELEVATION = (28 * Math.PI) / 180;
 export const DEFAULT_AZIMUTH = Math.PI * 0.25;
+
+/**
+ * How far above "straight at the city centre" the camera aims.
+ *
+ * At 28 degrees of elevation with a 55 degree field of view the horizon lands
+ * within half a degree of the top edge of the frame, so a camera pointed at the
+ * city centre shows no sky at all — which throws away the sunset the whole
+ * scene is lit by. Tilting the aim up by ten degrees drops the city into the
+ * lower part of the frame and puts the horizon in shot, without moving the
+ * camera off the 28 degree viewpoint. The fit below accounts for the tilt, so
+ * the city is still framed in full.
+ *
+ * Five degrees is measured, not guessed: the near edge of the city is what
+ * binds the fit, so every degree of tilt costs about 5% more distance (and so a
+ * smaller city on screen) to buy about 2% of frame height as sky. Five degrees
+ * puts the horizon a comfortable step below the top edge for a 14% wider shot;
+ * ten degrees buys a dramatic sky and makes the city too small to read.
+ */
+export const SKY_TILT = (5 * Math.PI) / 180;
+export const VIEW_PITCH = ELEVATION - SKY_TILT;
+
+/**
+ * Never frame closer than this, however small the city.
+ * A handful of buildings filling the screen looks like a rendering accident;
+ * the same buildings seen from a distance look like a city that has not been
+ * built yet, which is what they are.
+ */
+export const MIN_FRAME_DISTANCE = 170;
 
 /**
  * Axis-aligned bounds of the city.
@@ -202,12 +236,17 @@ export function requiredDistance(box, aspect, fovDeg = FOV, margin = MARGIN, ele
     rim.push([x, halfHeight, z], [x, -halfHeight, z]);
   }
 
-  // Camera at azimuth 0 looking at the origin (the box centre, translated out).
+  // Camera sits at `elevation` above the origin (the box centre, translated
+  // out) but aims along the shallower VIEW_PITCH, so the city occupies the
+  // lower part of the frame and the sky occupies the top.
   const cosE = Math.cos(elevation);
   const sinE = Math.sin(elevation);
-  const fwd = [-cosE, -sinE, 0];
+  const pitch = Math.max(elevation - SKY_TILT, 0.01);
+  const cosP = Math.cos(pitch);
+  const sinP = Math.sin(pitch);
+  const fwd = [-cosP, -sinP, 0];
   const right = [0, 0, -1];
-  const up = [-sinE, cosE, 0];
+  const up = [-sinP, cosP, 0];
 
   const fits = (d) => {
     const cx = cosE * d;
@@ -238,24 +277,35 @@ export function requiredDistance(box, aspect, fovDeg = FOV, margin = MARGIN, ele
     if (fits(mid)) hi = mid;
     else lo = mid;
   }
-  return Math.max(hi, 1);
+  return Math.max(hi, MIN_FRAME_DISTANCE);
 }
 
 /**
  * Where to put the camera so the whole city is visible.
  * Never hardcoded — always derived from the bounds that actually exist.
+ *
+ * The orbit target sits directly above the city centre rather than on the view
+ * ray, so orbiting sweeps around the city instead of swinging it across frame.
  */
 export function framing(box, aspect, azimuth = DEFAULT_AZIMUTH) {
-  const target = boxCenter(box);
+  const centre = boxCenter(box);
   const distance = requiredDistance(box, aspect);
   const horizontal = Math.cos(ELEVATION);
+
+  const position = {
+    x: centre.x + Math.cos(azimuth) * horizontal * distance,
+    y: centre.y + Math.sin(ELEVATION) * distance,
+    z: centre.z + Math.sin(azimuth) * horizontal * distance,
+  };
+
+  // Lift the aim point so the look direction runs at VIEW_PITCH rather than
+  // straight at the centre. Derived from the geometry, not tuned by eye:
+  //   tan(pitch) = (camera height above centre - lift) / horizontal distance
+  const lift = Math.sin(ELEVATION) * distance - Math.tan(VIEW_PITCH) * horizontal * distance;
+
   return {
-    target,
     distance,
-    position: {
-      x: target.x + Math.cos(azimuth) * horizontal * distance,
-      y: target.y + Math.sin(ELEVATION) * distance,
-      z: target.z + Math.sin(azimuth) * horizontal * distance,
-    },
+    position,
+    target: { x: centre.x, y: centre.y + lift, z: centre.z },
   };
 }

@@ -99,7 +99,7 @@ ${'─'.repeat(62)}
 
   camera position    ${f1(fit.position.x)}, ${f1(fit.position.y)}, ${f1(fit.position.z)}
   camera target      ${f1(fit.target.x)}, ${f1(fit.target.y)}, ${f1(fit.target.z)}
-  camera distance    ${f1(fit.distance)}  (fov ${L.FOV}, 45° elevation, ${Math.round((L.MARGIN - 1) * 100)}% margin, aspect ${REFERENCE_ASPECT.toFixed(2)})
+  camera distance    ${f1(fit.distance)}  (fov ${L.FOV}, ${Math.round((L.ELEVATION * 180) / Math.PI)}° elevation, ${Math.round((L.MARGIN - 1) * 100)}% margin, aspect ${REFERENCE_ASPECT.toFixed(2)})${fit.distance <= L.MIN_FRAME_DISTANCE + 0.01 ? ` — clamped to the ${L.MIN_FRAME_DISTANCE} minimum` : ''}
 
   scale check        footprint ${f1(footprint)} units — ${inBand ? 'OK' : `OUT OF BAND (expected ${MIN_FOOTPRINT}–${MAX_FOOTPRINT})`}`);
   }
