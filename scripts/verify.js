@@ -65,7 +65,8 @@ async function main() {
       peak = Math.max(peak, heights.size);
     }
 
-    const { positions, districts } = L.layout([...heights.keys()]);
+    const plan = L.layout([...heights.keys()]);
+    const { positions, districts, banks } = plan;
     const buildings = [...heights.entries()].map(([p, height]) => ({
       x: positions.get(p).x,
       z: positions.get(p).z,
@@ -89,6 +90,8 @@ ${'─'.repeat(62)}
   buildings (final)  ${buildings.length}
   buildings (peak)   ${peak}
   districts          ${districts.length}
+  banks              ${banks.map((b, i) => `bank ${i}: ${districts.filter((d) => d.bank === i).length} districts, ${f1(b.width)} x ${f1(b.depth)}`).join('\n                     ')}
+  river channel      ${plan.channel.width} units wide
 
   building height    min ${f1(sortedHeights[0])}   median ${f1(median(sortedHeights))}   max ${f1(sortedHeights[sortedHeights.length - 1])}
   largest district   ${districts[0].name} (${districts[0].files.length} files, ${districts[0].cols}x${districts[0].rows})
