@@ -120,15 +120,34 @@ being obvious why, so there is exactly one of them.
 | air | `FogExp2` in `#d8a8b8`, density solved per city — see below |
 | output | ACES filmic, exposure 0.55, then `UnrealBloomPass` at 0.9 / 0.5 / 0.72 |
 
-**Windows** are the detail that stops the buildings reading as bars. A canvas
-texture — a dark tile with a grid of small rectangles, half of them lit from a
-seeded PRNG, most warm and about 15% cool — drives the emissive channel, and its
-repeat is set from each building's height so window rows stay the same physical
-size on a two-storey file and a seventy-unit tower. A shader patch keeps the
-windows off the roofs without splitting every building across two materials,
-which would double the draw calls. The filler carries a per-instance UV scale
-through the same trick, so 3000 background buildings get correct window rows
-from one draw call.
+**Facades** are what stop the buildings reading as boxes, and the important
+part is that the structure lives in the **colour** map, not just the emissive
+one. A flat-coloured box with a few glowing dots on it is a box with glowing
+dots on it, at any distance and in any light. What reads as a building is the
+curtain wall itself: panes of dark glass held in a grid of mullions, floor slabs
+and piers that catch the light whether or not anyone is home.
+
+So each facade is generated once on a canvas and produces two maps off the same
+grid — a colour map that is always visible, and an emissive map for the 28% of
+panes that happen to be lit. Under half a facade lit reads as a wall of yellow
+squares; a real tower at dusk is mostly dark glass with the lit offices
+scattered through it, and that contrast is the depth.
+
+There are three styles — `glass` (bright metal mullions, wide panes, high
+metalness), `concrete` (stone piers, punched windows) and `brick` (warm masonry,
+small openings) — picked per building from a hash of its path, so a file always
+looks like itself and a skyline is not one building repeated. Buildings also
+vary in how much of their 3×3 plot they fill, and anything over 12 units gets a
+wider podium, because a building meets the ground differently from the way it
+meets the sky.
+
+The repeat on both maps is set from each segment's real width and height, so
+window rows stay the same physical size on a two-storey file, on a
+seventy-unit tower, and on each narrower tier of a setback. A shader patch caps
+the roofs with flat dark membrane instead of the facade, and kills their
+emission, without splitting every segment across two materials. The filler
+carries a per-instance UV scale through the same trick, so 3000 background
+buildings get correct facades from one draw call.
 
 Bloom thresholds on **linear** radiance, before tone mapping, which is worth
 knowing before picking emissive values: `#ffd9a0` has a linear luminance of

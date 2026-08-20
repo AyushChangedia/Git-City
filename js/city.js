@@ -14,7 +14,7 @@ import {
   FOOTPRINT, HEIGHT_MIN, TAPER_HEIGHT, heightForLines, layout,
   cityBounds, boxSize, boxCenter,
 } from './layout.js';
-import { makeWindowTexture, WINDOW_TILE_UNITS } from './textures.js';
+import { makeFacade, makeRoofTexture, FACADE_STYLES, WINDOW_TILE_UNITS } from './textures.js';
 
 export * from './layout.js';
 
@@ -33,6 +33,18 @@ const EMISSIVE_WINDOW = new THREE.Color('#ffd9a0');
 const WINDOW_EMISSIVE_INTENSITY = 1.0;
 
 /**
+ * Buildings vary in width within their plot. A block of identical squares on a
+ * regular grid reads as a chart however it is textured; real streets have gaps
+ * of different sizes. The plot itself never changes — this only decides how
+ * much of it the building fills.
+ */
+const WIDTH_MIN = 0.74;
+const WIDTH_RANGE = 0.26;
+
+/** Above this a building gets a podium: a wider two-or-three storey base. */
+const PODIUM_HEIGHT = 12;
+
+/**
  * A tall building is three boxes, each 85% the width of the one below.
  * A single extruded box is a bar; a setback taper is a tower.
  */
@@ -40,6 +52,8 @@ const TAPER_RATIO = 0.85;
 const SEGMENT_SPLIT = [0.46, 0.32, 0.22];
 
 const SPIRE_COUNT = 3;   // spires go on the tallest few, as landmarks
+
+const _tint = new THREE.Color();
 
 const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
 const clamp01 = (t) => (t < 0 ? 0 : t > 1 ? 1 : t);
@@ -76,7 +90,7 @@ export class City {
       roughness: 1, metalness: 0,
     });
 
-    this.windowTexture = makeWindowTexture();
+    this._initFacades();
 
     /** @type {Map<string, object>} path -> building record */
     this.buildings = new Map();
@@ -298,7 +312,9 @@ export class City {
     this.tipGeometry.dispose();
     this.spireMaterial.dispose();
     this.tipMaterial.dispose();
-    this.windowTexture.dispose();
+    this.roofMaterial.dispose();
+    this.roofTexture.dispose();
+    for (const f of this.facades) { f.map.dispose(); f.emissiveMap.dispose(); }
   }
 
   /* ---------------------------------------------------------- internals -- */
@@ -315,99 +331,142 @@ export class City {
     geometry.setAttribute('aRoof', new THREE.BufferAttribute(roof, 1));
   }
 
-  _makeWallMaterial() {
-    const emissiveMap = this.windowTexture.clone();
+  /**
+   * Facade sources, built once and shared. Each building clones the textures it
+   * needs so it can set its own repeat, but the underlying canvases — and so
+   * the GPU uploads — are shared across the whole city.
+   */
+  _initFacades() {
+    this.facades = FACADE_STYLES.map((style, i) => makeFacade(style, i + 1));
+    this.roofTexture = makeRoofTexture();
+    this.roofMaterial = new THREE.MeshStandardMaterial({
+      color: 0x2a2e36, map: this.roofTexture, roughness: 0.95, metalness: 0.05,
+    });
+  }
+
+  /**
+   * One material per segment, because the repeat has to match that segment's
+   * own width and height — a tapered tier is narrower than the one below it,
+   * and stretching the same UVs over both would give the tower two different
+   * window sizes.
+   */
+  _makeFacadeMaterial(styleIndex) {
+    const facade = this.facades[styleIndex];
+    const map = facade.map.clone();
+    const emissiveMap = facade.emissiveMap.clone();
+    map.needsUpdate = true;
     emissiveMap.needsUpdate = true;
 
     const material = new THREE.MeshStandardMaterial({
       color: COLOR_BASE.clone(),
-      roughness: 0.7,
-      metalness: 0.2,
+      map,
+      roughness: facade.roughness,
+      metalness: facade.metalness,
       emissive: EMISSIVE_WINDOW,
       emissiveMap,
       emissiveIntensity: WINDOW_EMISSIVE_INTENSITY,
     });
 
-    // Suppress emission on the roof faces only. Patching one shader beats
-    // splitting every building across two materials, which would double the
-    // draw calls for a city that already has thousands. The cache key is
-    // shared so every building still compiles to a single program.
+    // Roofs get a flat dark cap instead of the facade, and no lit windows.
+    // Patching one shader beats splitting every segment across two materials,
+    // which would double the draw calls for a city that already has thousands.
+    // The cache key is shared so every building still compiles one program.
     material.onBeforeCompile = (shader) => {
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nattribute float aRoof;\nvarying float vRoof;')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvRoof = aRoof;');
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', '#include <common>\nvarying float vRoof;')
-        .replace(
-          '#include <emissivemap_fragment>',
-          '#include <emissivemap_fragment>\n\ttotalEmissiveRadiance *= 1.0 - vRoof;'
-        );
+        .replace('#include <map_fragment>',
+          '#include <map_fragment>\n\tdiffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.055, 0.060, 0.070), vRoof);')
+        .replace('#include <emissivemap_fragment>',
+          '#include <emissivemap_fragment>\n\ttotalEmissiveRadiance *= 1.0 - vRoof;');
     };
     material.customProgramCacheKey = () => 'gitcity-building';
-    return { material, emissiveMap };
+
+    return { material, map, emissiveMap };
   }
 
   _create(path) {
     const group = new THREE.Group();
     const hash = hashOf(path);
-    const { material, emissiveMap } = this._makeWallMaterial();
 
     const b = {
-      path, group, material, emissiveMap,
-      hash,
-      shade: 0.92 + ((hash >>> 8) % 1000) / 1000 * 0.16,
-      segments: [],
+      path, group, hash,
+      style: hash % FACADE_STYLES.length,
+      // How much of its 3x3 plot this building fills, and how much wider its
+      // podium is. Both fixed per path, so a file always looks like itself.
+      width: FOOTPRINT * (WIDTH_MIN + ((hash >>> 4) % 1000) / 1000 * WIDTH_RANGE),
+      shade: 0.9 + ((hash >>> 14) % 1000) / 1000 * 0.2,
+      parts: [],          // { mesh, material, map, emissiveMap }
       roofBoxes: [],
       spire: null,
       tip: null,
       tiers: 0,
+      hasPodium: false,
       height: 0, h0: 0, h1: 0, hStart: null,
       px0: 0, px1: 0, pz0: 0, pz1: 0, pStart: null,
       lastTouched: this.commitIndex,
       dying: false,
       placed: false,
     };
+    b.podiumWidth = Math.min(FOOTPRINT, b.width * 1.22);
 
     this.buildings.set(path, b);
     this.group.add(group);
     return b;
   }
 
+  _addPart(b) {
+    const { material, map, emissiveMap } = this._makeFacadeMaterial(b.style);
+    const mesh = new THREE.Mesh(this.geometry, material);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.userData.path = b.path;
+    b.group.add(mesh);
+    b.parts.push({ mesh, material, map, emissiveMap });
+    return mesh;
+  }
+
   /**
    * Give the building the right number of parts for the height it is heading
-   * for. Rebuilt only when it crosses the taper threshold, not every frame.
+   * for. Rebuilt only when it crosses a threshold, not every frame.
+   *
+   * Anything worth calling a building has a base that meets the ground
+   * differently from the way its shaft meets the sky, so above a low-rise
+   * height it gets a wider podium; above the taper height it gets three
+   * setback tiers on top of that.
    */
   _buildParts(b, targetHeight) {
     const tiers = targetHeight > TAPER_HEIGHT ? SEGMENT_SPLIT.length : 1;
-    if (tiers === b.tiers) return;
+    const hasPodium = targetHeight > PODIUM_HEIGHT;
+    if (tiers === b.tiers && hasPodium === b.hasPodium && b.parts.length) return;
 
-    for (const m of b.segments) { b.group.remove(m); }
+    for (const p of b.parts) {
+      b.group.remove(p.mesh);
+      p.map.dispose();
+      p.emissiveMap.dispose();
+      p.material.dispose();
+    }
     for (const m of b.roofBoxes) { b.group.remove(m); m.geometry.dispose(); }
-    b.segments = [];
+    b.parts = [];
     b.roofBoxes = [];
 
-    for (let i = 0; i < tiers; i++) {
-      const mesh = new THREE.Mesh(this.geometry, b.material);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.userData.path = b.path;
-      b.group.add(mesh);
-      b.segments.push(mesh);
-    }
+    const count = tiers + (hasPodium ? 1 : 0);
+    for (let i = 0; i < count; i++) this._addPart(b);
 
-    // Clutter on the mid-rise roofs: plant, lift housing, whatever. Cheap, and
-    // it breaks up the flat tops that make a skyline look extruded.
-    if (tiers === 1 && targetHeight > 8) {
-      const count = 1 + (b.hash % 3);
-      for (let i = 0; i < count; i++) {
+    // Clutter on the low-rise roofs: plant, lift housing, water tanks. Cheap,
+    // and it breaks up the flat tops that make a skyline look extruded.
+    if (tiers === 1 && targetHeight > 6) {
+      const n = 1 + (b.hash % 2);
+      for (let i = 0; i < n; i++) {
         const r = ((b.hash >>> (i * 5 + 3)) % 100) / 100;
         const r2 = ((b.hash >>> (i * 7 + 11)) % 100) / 100;
-        const w = FOOTPRINT * (0.16 + r * 0.2);
-        const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, w * (0.7 + r2), w), b.material);
+        const w = b.width * (0.18 + r * 0.22);
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, w * (0.6 + r2 * 0.8), w), this.roofMaterial);
         mesh.castShadow = true;
-        mesh.userData.roofBox = true;
-        mesh.position.x = (r - 0.5) * (FOOTPRINT - w);
-        mesh.position.z = (r2 - 0.5) * (FOOTPRINT - w);
+        mesh.position.x = (r - 0.5) * (b.width - w);
+        mesh.position.z = (r2 - 0.5) * (b.width - w);
         b.group.add(mesh);
         b.roofBoxes.push(mesh);
       }
@@ -420,28 +479,35 @@ export class City {
     }
 
     b.tiers = tiers;
+    b.hasPodium = hasPodium;
   }
 
   /**
    * Position and scale every part for a given current height.
    *
    * Called each frame of the growth tween rather than scaling the group as a
-   * whole, so the setbacks keep their proportions and the window rows keep
-   * their physical size the entire way up.
+   * whole, so the setbacks keep their proportions and — more importantly — the
+   * window rows keep their physical size the entire way up. A facade whose
+   * storeys stretch as the building grows is the thing that reads as a bar.
    */
   _shapeTo(b, height) {
     const h = Math.max(height, 1e-4);
-    const tiers = b.segments.length;
+    let i = 0;
     let y = 0;
 
-    for (let i = 0; i < tiers; i++) {
-      const fraction = tiers === 1 ? 1 : SEGMENT_SPLIT[i];
-      const segHeight = Math.max(h * fraction, 1e-4);
-      const width = FOOTPRINT * Math.pow(TAPER_RATIO, i);
+    if (b.hasPodium) {
+      const podiumHeight = Math.max(Math.min(h * 0.2, 3.5), 1e-4);
+      this._shapePart(b.parts[i++], b.podiumWidth, podiumHeight, y);
+      y += podiumHeight;
+    }
 
-      const mesh = b.segments[i];
-      mesh.scale.set(width, segHeight, width);
-      mesh.position.y = y;
+    const shaft = Math.max(h - y, 1e-4);
+    const tiers = b.tiers;
+    for (let t = 0; t < tiers; t++) {
+      const fraction = tiers === 1 ? 1 : SEGMENT_SPLIT[t];
+      const segHeight = Math.max(shaft * fraction, 1e-4);
+      const width = b.width * Math.pow(TAPER_RATIO, t);
+      this._shapePart(b.parts[i++], width, segHeight, y);
       y += segHeight;
     }
 
@@ -454,20 +520,29 @@ export class City {
       b.tip.position.y = h + spireHeight;
       b.tip.scale.setScalar(Math.min(1, h / 20));
     }
+  }
 
-    // Keep window rows the same physical size on a two-storey file and a
-    // seventy-unit tower. Without this the texture stretches with the box and
-    // tall buildings get tall windows, which is what makes them read as bars.
-    b.emissiveMap.repeat.set(FOOTPRINT / WINDOW_TILE_UNITS, h / WINDOW_TILE_UNITS);
+  /** Size one segment and match its facade repeat to its real dimensions. */
+  _shapePart(part, width, height, y) {
+    if (!part) return;
+    part.mesh.scale.set(width, height, width);
+    part.mesh.position.y = y;
+    const rx = width / WINDOW_TILE_UNITS;
+    const ry = height / WINDOW_TILE_UNITS;
+    part.map.repeat.set(rx, ry);
+    part.emissiveMap.repeat.set(rx, ry);
   }
 
   _dispose(path) {
     const b = this.buildings.get(path);
     if (!b) return;
     for (const m of b.roofBoxes) m.geometry.dispose();
+    for (const p of b.parts) {
+      p.map.dispose();
+      p.emissiveMap.dispose();
+      p.material.dispose();
+    }
     this.group.remove(b.group);
-    b.emissiveMap.dispose();
-    b.material.dispose();
     this.buildings.delete(path);
   }
 
@@ -519,10 +594,8 @@ export class City {
   _refreshHeat() {
     for (const b of this.buildings.values()) {
       const cool = clamp01((this.commitIndex - b.lastTouched) / HEAT_COMMITS);
-      b.material.color
-        .copy(COLOR_BASE)
-        .lerp(COLOR_HOT, HEAT_TINT * (1 - cool))
-        .multiplyScalar(b.shade);
+      _tint.copy(COLOR_BASE).lerp(COLOR_HOT, HEAT_TINT * (1 - cool)).multiplyScalar(b.shade);
+      for (const p of b.parts) p.material.color.copy(_tint);
     }
   }
 }

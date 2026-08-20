@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { Water } from 'three/addons/objects/Water.js';
-import { makeWaterNormalsFallback, makeWindowTexture, WINDOW_TILE_UNITS } from './textures.js';
+import { makeWaterNormalsFallback, makeFacade, WINDOW_TILE_UNITS } from './textures.js';
 import { FOOTPRINT, CHANNEL_HALF, boxSize, boxCenter } from './layout.js';
 
 /* ----------------------------------------------------------------- sun -- */
@@ -451,15 +451,22 @@ export class World {
       new THREE.InstancedBufferAttribute(new Float32Array(uvScales), 2)
     );
 
-    const emissiveMap = makeWindowTexture();
+    // The horizon uses the same facades as the data city, so the two read as
+    // one city rather than a model parked in front of a backdrop.
+    const facade = makeFacade('concrete', 7);
     const material = new THREE.MeshStandardMaterial({
-      color: 0x3a3f4c, roughness: 0.8, metalness: 0.1,
-      emissive: new THREE.Color('#ffd9a0'), emissiveMap, emissiveIntensity: 0.9,
+      color: 0x4c525f,
+      map: facade.map,
+      roughness: facade.roughness,
+      metalness: facade.metalness,
+      emissive: new THREE.Color('#ffd9a0'),
+      emissiveMap: facade.emissiveMap,
+      emissiveIntensity: 0.9,
     });
 
-    // Per-instance window scaling. Without it every filler building stretches
-    // one tile of windows over its whole face, so a tall one gets tall windows
-    // and the horizon reads as striped boxes.
+    // Per-instance facade scaling, on both the colour and the emissive map.
+    // Without it every filler building stretches one tile over its whole face,
+    // so a tall one gets tall windows and the horizon reads as striped boxes.
     material.onBeforeCompile = (shader) => {
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nattribute vec2 aUvScale;\nvarying vec2 vUvScale;')
@@ -467,9 +474,13 @@ export class World {
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', '#include <common>\nvarying vec2 vUvScale;')
         .replace(
+          '#include <map_fragment>',
+          'vec4 gcTexel = texture2D(map, fract(vMapUv * vUvScale));\n' +
+          '\tdiffuseColor *= gcTexel;'
+        )
+        .replace(
           '#include <emissivemap_fragment>',
-          'vec2 gcUv = fract(vEmissiveMapUv * vUvScale);\n' +
-          '\ttotalEmissiveRadiance *= texture2D(emissiveMap, gcUv).rgb;'
+          'totalEmissiveRadiance *= texture2D(emissiveMap, fract(vEmissiveMapUv * vUvScale)).rgb;'
         );
     };
     material.customProgramCacheKey = () => 'gitcity-filler';
