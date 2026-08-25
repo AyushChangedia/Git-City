@@ -182,6 +182,15 @@ export async function fetchRepo(repo, token, onProgress = () => {}) {
         files.push({ path, status: 'removed', lines: 1 });
         continue;
       }
+
+      // A rename is a demolition and a construction. GitHub reports only the
+      // new name with the old one in previous_filename, so without this the
+      // old building is never torn down and stands empty for the rest of the
+      // replay — every rename in the repo leaving a ghost behind.
+      if (f.status === 'renamed' && f.previous_filename && f.previous_filename !== path) {
+        totals.delete(f.previous_filename);
+        files.push({ path: f.previous_filename, status: 'removed', lines: 1 });
+      }
       const known = totals.has(path);
       const next = Math.max(1, (totals.get(path) || 0) + (f.additions || 0) - (f.deletions || 0));
       totals.set(path, next);
