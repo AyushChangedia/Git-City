@@ -1,0 +1,55 @@
+# CI for Git City.
+#
+# The project has no dependencies and no build step, so there is nothing to
+# install and nothing to compile — this runs the two checks that exist:
+#
+#   npm test        the unit suite (node:test, no framework)
+#   npm run verify  replays every bundled dataset through js/layout.js and
+#                   checks the resulting city is a sane scale
+#
+# They are separate steps rather than `npm run check` so a red tick says which
+# of the two went wrong without anyone opening the log.
+
+name: CI
+
+on:
+  push:
+    branches: [claude/git-history-3d-city-9sx117]
+  pull_request:
+  workflow_dispatch:
+
+# A second push supersedes the first: the older run is cancelled rather than
+# both finishing and the stale one being the last to report.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # package.json's test script hands `node --test` a glob, which older
+        # runtimes reject outright, so 22 is the floor rather than a
+        # preference. 24 is here to catch a deprecation before it lands.
+        node: ['22', '24']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          # No cache: there is no lockfile and nothing to install. Pointing the
+          # cache at a package.json with no dependencies just fails the step.
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Verify bundled datasets
+        run: npm run verify
