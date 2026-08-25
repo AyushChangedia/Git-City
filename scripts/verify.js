@@ -33,56 +33,84 @@ function median(sorted) {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-async function main() {
-  const L = await import(
-    require('url').pathToFileURL(path.join(__dirname, '..', 'js', 'layout.js')).href
-  );
+/**
+ * Read and structurally check one dataset.
+ *
+ * Every throw here names the file and says what is wrong with it. The bare
+ * `JSON.parse(readFileSync(...))` this replaces reported a missing dataset as
+ * a raw ENOENT and a dataset without a `commits` array as
+ * "data.commits is not iterable" — true, and useless to whoever has to fix it.
+ */
+function readDataset(file) {
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    throw new Error(
+      err.code === 'ENOENT' ? 'no such file' : `could not be read — ${err.message}`
+    );
+  }
 
-  const targets = process.argv.slice(2).length
-    ? process.argv.slice(2)
-    : JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'manifest.json'), 'utf8'))
-        .map((e) => e.file);
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (err) {
+    throw new Error(`is not valid JSON — ${err.message}`);
+  }
 
-  let failures = 0;
+  if (!data || typeof data !== 'object') throw new Error('is not a JSON object');
+  if (!Array.isArray(data.commits)) throw new Error('has no "commits" array');
+  if (data.commits.length === 0) throw new Error('contains no commits');
+  return data;
+}
 
-  for (const rel of targets) {
-    const file = path.isAbsolute(rel) ? rel : path.join(process.cwd(), rel);
-    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+/** One dataset: replay it, measure it, print it. Throws with a plain message. */
+function checkDataset(L, file, data) {
+  // Replay the history exactly as City.applyCommit does: a removal deletes
+  // the building, anything else sets its target height.
+  const heights = new Map();
+  let peak = 0;
+  let touches = 0;
 
-    // Replay the history exactly as City.applyCommit does: a removal deletes
-    // the building, anything else sets its target height.
-    const heights = new Map();
-    let peak = 0;
-    let touches = 0;
-
-    for (const commit of data.commits) {
-      for (const fileRec of commit.files || []) {
-        if (!fileRec.path) continue;
-        touches++;
-        if (fileRec.status === 'removed') heights.delete(fileRec.path);
-        else heights.set(fileRec.path, L.heightForLines(fileRec.lines));
-      }
-      peak = Math.max(peak, heights.size);
+  for (const commit of data.commits) {
+    for (const fileRec of commit.files || []) {
+      if (!fileRec.path) continue;
+      touches++;
+      if (fileRec.status === 'removed') heights.delete(fileRec.path);
+      else heights.set(fileRec.path, L.heightForLines(fileRec.lines));
     }
+    peak = Math.max(peak, heights.size);
+  }
 
-    const plan = L.layout([...heights.keys()]);
-    const { positions, districts, banks } = plan;
-    const buildings = [...heights.entries()].map(([p, height]) => ({
-      x: positions.get(p).x,
-      z: positions.get(p).z,
-      height,
-    }));
+  // A history whose last commits delete everything leaves nothing standing,
+  // and every measurement below is then taken of a city that does not exist:
+  // cityBounds returns null and boxSize(null) throws a TypeError naming a
+  // property rather than the dataset. It is a legitimate history — a repo
+  // emptied before its final commit — so say so and move on to the next file.
+  if (heights.size === 0) {
+    throw new Error(
+      `ends with no files standing (${touches} file touches across ` +
+        `${data.commits.length} commits, peak ${peak}) — there is no city to measure`
+    );
+  }
 
-    const box = L.cityBounds(buildings);
-    const size = L.boxSize(box);
-    const fit = L.framing(box, REFERENCE_ASPECT);
-    const sortedHeights = buildings.map((b) => b.height).sort((a, b) => a - b);
+  const plan = L.layout([...heights.keys()]);
+  const { positions, districts, banks } = plan;
+  const buildings = [...heights.entries()].map(([p, height]) => ({
+    x: positions.get(p).x,
+    z: positions.get(p).z,
+    height,
+  }));
 
-    const footprint = Math.max(size.x, size.z);
-    const inBand = footprint >= MIN_FOOTPRINT && footprint <= MAX_FOOTPRINT;
-    if (!inBand) failures++;
+  const box = L.cityBounds(buildings);
+  const size = L.boxSize(box);
+  const fit = L.framing(box, REFERENCE_ASPECT);
+  const sortedHeights = buildings.map((b) => b.height).sort((a, b) => a - b);
 
-    console.log(`
+  const footprint = Math.max(size.x, size.z);
+  const inBand = footprint >= MIN_FOOTPRINT && footprint <= MAX_FOOTPRINT;
+
+  console.log(`
 ${data.repo}   (${path.relative(process.cwd(), file)})
 ${'─'.repeat(62)}
   commits            ${data.commits.length}
@@ -105,13 +133,47 @@ ${'─'.repeat(62)}
   camera distance    ${f1(fit.distance)}  (fov ${L.FOV}, ${Math.round((L.ELEVATION * 180) / Math.PI)}° elevation, ${Math.round((L.MARGIN - 1) * 100)}% margin, aspect ${REFERENCE_ASPECT.toFixed(2)})${fit.distance <= L.MIN_FRAME_DISTANCE + 0.01 ? ` — clamped to the ${L.MIN_FRAME_DISTANCE} minimum` : ''}
 
   scale check        footprint ${f1(footprint)} units — ${inBand ? 'OK' : `OUT OF BAND (expected ${MIN_FOOTPRINT}–${MAX_FOOTPRINT})`}`);
+
+  return inBand;
+}
+
+async function main() {
+  const L = await import(
+    require('url').pathToFileURL(path.join(__dirname, '..', 'js', 'layout.js')).href
+  );
+
+  const targets = process.argv.slice(2).length
+    ? process.argv.slice(2)
+    : JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'manifest.json'), 'utf8'))
+        .map((e) => e.file);
+
+  const failures = [];
+
+  for (const rel of targets) {
+    const file = path.isAbsolute(rel) ? rel : path.join(process.cwd(), rel);
+    const label = path.relative(process.cwd(), file);
+
+    // Each dataset is checked in isolation. Letting one throw out of the loop
+    // meant the first broken file ended the run, so the datasets after it were
+    // never looked at and a green line was never proof that they were fine.
+    try {
+      if (!checkDataset(L, file, readDataset(file))) {
+        failures.push(`${label}: footprint outside the ${MIN_FOOTPRINT}–${MAX_FOOTPRINT} band`);
+      }
+    } catch (err) {
+      console.log(`\n${label}\n${'─'.repeat(62)}\n  FAILED             ${err.message}`);
+      failures.push(`${label}: ${err.message}`);
+    }
   }
 
   console.log('');
-  if (failures) {
-    console.error(`${failures} dataset(s) outside the sane scale band.`);
-    process.exit(1);
+  if (failures.length) {
+    console.error(`${failures.length} of ${targets.length} dataset(s) failed:`);
+    for (const f of failures) console.error(`  - ${f}`);
+    process.exitCode = 1;
+    return;
   }
+  console.log(`${targets.length} dataset(s) OK.`);
 }
 
 main().catch((err) => {

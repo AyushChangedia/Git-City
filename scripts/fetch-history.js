@@ -59,6 +59,32 @@ function firstLine(message, max = MESSAGE_MAX) {
   return line.length > max ? line.slice(0, max - 1) + '…' : line;
 }
 
+/**
+ * Parse one `git log --raw` status line.
+ *
+ *   :100644 100644 abc def M\tsrc/app.js
+ *   :100644 100644 abc def R100\told.js\tnew.js
+ *
+ * A rename carries two tab-separated paths, and taking everything after the
+ * first tab as "the path" produced a building whose path contained a literal
+ * tab — the real destination never appeared and the source was never removed.
+ * diff.renames has defaulted to on since Git 2.9, so this is the common case,
+ * not an exotic one.
+ */
+function parseRawStatus(line) {
+  const tab = line.indexOf('\t');
+  if (tab === -1) return null;
+
+  const letter = line.slice(0, tab).trim().split(/\s+/).pop()[0];
+  const rest = line.slice(tab + 1).split('\t');
+
+  // R and C report source then destination; everything else reports one path.
+  if ((letter === 'R' || letter === 'C') && rest.length >= 2) {
+    return { letter, path: rest[1], previousPath: rest[0] };
+  }
+  return { letter, path: rest[0] };
+}
+
 /** Apply one commit's per-file deltas to the running totals, return file records. */
 function applyDeltas(totals, changes) {
   const files = [];
@@ -67,6 +93,17 @@ function applyDeltas(totals, changes) {
       totals.delete(c.path);
       files.push({ path: c.path, status: 'removed', lines: 1 });
       continue;
+    }
+
+    // A rename is a demolition and a construction. Without the removal the old
+    // building is never torn down and stands empty for the rest of the replay.
+    if (c.previousPath && c.previousPath !== c.path) {
+      const carried = totals.get(c.previousPath) || 0;
+      totals.delete(c.previousPath);
+      files.push({ path: c.previousPath, status: 'removed', lines: 1 });
+      // The file's size did not change because it moved, so carry it across
+      // rather than restarting the new building from nothing.
+      if (carried && !totals.has(c.path)) totals.set(c.path, carried);
     }
     const known = totals.has(c.path);
     const next = Math.max(1, (totals.get(c.path) || 0) + c.additions - c.deletions);
@@ -159,15 +196,16 @@ function fromGit(source, limit) {
       // Status letters come from the --raw section, counts from --numstat.
       const statuses = new Map();
       const counts = new Map();
+      const renames = new Map();
 
       for (let i = 1; i < lines.length; i++) {
         const line = lines[i];
         if (!line) continue;
         if (line[0] === ':') {
-          const tab = line.indexOf('\t');
-          if (tab === -1) continue;
-          const letter = line.slice(0, tab).trim().split(/\s+/).pop()[0];
-          statuses.set(line.slice(tab + 1), letter);
+          const parsed = parseRawStatus(line);
+          if (!parsed) continue;
+          statuses.set(parsed.path, parsed.letter);
+          if (parsed.previousPath) renames.set(parsed.path, parsed.previousPath);
         } else {
           const parts = line.split('\t');
           if (parts.length < 3) continue;
@@ -182,9 +220,16 @@ function fromGit(source, limit) {
 
       const changes = [];
       for (const [filePath, letter] of statuses) {
-        const c = counts.get(filePath) || { additions: 0, deletions: 0 };
+        const previousPath = renames.get(filePath);
+        // --numstat writes a rename as "old => new"; --raw writes the two paths
+        // in separate columns. Look under both so the counts are not lost.
+        const c =
+          counts.get(filePath) ||
+          (previousPath && counts.get(`${previousPath} => ${filePath}`)) ||
+          { additions: 0, deletions: 0 };
         changes.push({
           path: filePath,
+          previousPath,
           status: letter === 'D' ? 'removed' : letter === 'A' ? 'added' : 'modified',
           additions: c.additions,
           deletions: c.deletions,
@@ -267,6 +312,7 @@ async function fromApi(repo, limit, token) {
 
     const changes = (detail.files || []).map((f) => ({
       path: f.filename,
+      previousPath: f.status === 'renamed' ? f.previous_filename : undefined,
       status: f.status === 'removed' ? 'removed' : f.status === 'added' ? 'added' : 'modified',
       additions: f.additions || 0,
       deletions: f.deletions || 0,
@@ -418,7 +464,13 @@ async function main() {
   writeDataset(args.out || defaultOut(result.repo), result.repo, result.commits);
 }
 
-main().catch((err) => {
-  console.error(`\nfetch-history failed: ${err.message}`);
-  process.exit(1);
-});
+// Only run when invoked directly. Without this the CLI fires on require and
+// the parsing below cannot be exercised from a test.
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(`\nfetch-history failed: ${err.message}`);
+    process.exit(1);
+  });
+}
+
+module.exports = { parseRawStatus, applyDeltas };

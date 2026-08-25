@@ -339,6 +339,36 @@ It exits non-zero if a city's footprint falls outside 20–5000 units, which is
 the band where the scale is sane — smaller and the buildings are specks, larger
 and the camera is so far out that everything aliases into mush.
 
+Each dataset is checked in isolation, so one broken file does not stop the rest
+being measured, and the run closes with how many of how many failed.
+
+---
+
+## Tests
+
+```bash
+npm test        # the unit suite
+npm run check   # the suite, then every bundled dataset
+```
+
+Nothing to install first. The suite runs on Node's built-in test runner, so the
+project keeps its no-build-step, no-install promise the whole way through —
+`package.json` has no dependencies at all, dev ones included.
+
+What is covered is the part with no visible failure mode: the pure geometry in
+`js/layout.js`, the camera fit across city shapes and window aspects, the commit
+replay in `scripts/fetch-history.js`, the REST paging and error handling in
+`js/github.js`, and `scripts/verify.js` driven as a subprocess the way CI runs
+it. A wrong number in any of those does not throw — it renders a city that is
+quietly the wrong shape, which is the kind of bug nobody notices.
+
+The renderer itself is not unit-tested. Covering `js/city.js` or `js/world.js`
+would mean a headless WebGL context and screenshot diffs, a much larger
+commitment than this project warrants. `npm run verify` checks the numbers
+those modules are handed instead.
+
+CI runs both checks on every push and pull request, on Node 22 and 24.
+
 ---
 
 ## Running locally
@@ -373,6 +403,8 @@ data/*.json                pre-generated commit data
 data/manifest.json         which datasets appear in the dropdown
 scripts/fetch-history.js   dataset generator
 scripts/verify.js          headless geometry check
+tests/*.test.mjs           unit suite, node:test, no dependencies
+.github/workflows/ci.yml   runs both checks on push and pull request
 ```
 
 `js/layout.js` exists so the geometry can be verified in Node without a

@@ -14,6 +14,18 @@
 
 export const COMMIT_CAP = 300;
 
+/**
+ * GitHub's maximum, and deliberately a constant.
+ *
+ * The offset of a page is per_page x (page - 1), so shrinking per_page on the
+ * last request re-reads earlier commits instead of finishing the list. With a
+ * cap of 250 that meant page 3 asking for 50 and being handed commits 101-150
+ * again, while 201-250 were never fetched at all. It happens to be harmless at
+ * 300 only because 300 divides by 100 — which is exactly the kind of thing
+ * that breaks the day someone tunes the cap.
+ */
+const PAGE_SIZE = 100;
+
 /** Errors carrying a message that is safe and useful to render in the DOM. */
 export class GitHubError extends Error {
   constructor(message, hint) {
@@ -145,14 +157,13 @@ export async function fetchRepo(repo, token, onProgress = () => {}) {
 
   const list = [];
   for (let page = 1; list.length < COMMIT_CAP; page++) {
-    const perPage = Math.min(100, COMMIT_CAP - list.length);
     const { body } = await ghFetch(
-      `https://api.github.com/repos/${repo}/commits?per_page=${perPage}&page=${page}`,
+      `https://api.github.com/repos/${repo}/commits?per_page=${PAGE_SIZE}&page=${page}`,
       token
     );
     if (!Array.isArray(body) || body.length === 0) break;
     list.push(...body);
-    if (body.length < perPage) break;
+    if (body.length < PAGE_SIZE) break;      // a short page is the last page
     onProgress(`Listing commits for ${repo}… ${list.length}`);
   }
 
@@ -181,6 +192,15 @@ export async function fetchRepo(repo, token, onProgress = () => {}) {
         totals.delete(path);
         files.push({ path, status: 'removed', lines: 1 });
         continue;
+      }
+
+      // A rename is a demolition and a construction. GitHub reports only the
+      // new name with the old one in previous_filename, so without this the
+      // old building is never torn down and stands empty for the rest of the
+      // replay — every rename in the repo leaving a ghost behind.
+      if (f.status === 'renamed' && f.previous_filename && f.previous_filename !== path) {
+        totals.delete(f.previous_filename);
+        files.push({ path: f.previous_filename, status: 'removed', lines: 1 });
       }
       const known = totals.has(path);
       const next = Math.max(1, (totals.get(path) || 0) + (f.additions || 0) - (f.deletions || 0));
