@@ -9,9 +9,9 @@ back to slate over the next twenty commits. Play it back and you can see a
 codebase grow, sprawl, get refactored, and lose whole neighbourhoods to a
 delete.
 
-![Git City at dusk: the axios repository as a river city, windows lit, haze on the horizon](docs/screenshot.png)
+! [Git City at dusk: the axios repository as a river city, windows lit, haze on the horizon](docs/screenshot.png)
 
-> **Demo GIF placeholder** — drop a recording at `docs/demo.gif` and swap the
+> ** Demo GIF placeholder** — drop a recording at `docs/demo.gif` and swap the
 > image above for `![Git City](docs/demo.gif)`.
 
 **[▶ Live demo](https://ayushchangedia.github.io/Git-City/)** · no build step,
