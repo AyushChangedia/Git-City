@@ -215,3 +215,108 @@ test('the error names the commit and file it found', () => {
     /demo\.json: commit 1, file 0/,
   );
 });
+
+/* --------------------------------------------------------- error handling -- */
+
+/** A fake fetch answering with one status and set of headers. */
+function respondWith(status, headers = {}, body = []) {
+  return async () => ({
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (name) => headers[name.toLowerCase()] ?? null },
+    json: async () => body,
+  });
+}
+
+async function failsWith(fn) {
+  try {
+    await fn();
+  } catch (error) {
+    return error;
+  }
+  throw new Error('expected a GitHubError, got none');
+}
+
+test('a rate limit is reported as one, with the reset time', async () => {
+  // The most likely failure by far: one request per commit against sixty an
+  // hour. It has to be distinguishable from every other 403.
+  globalThis.fetch = respondWith(403, {
+    'x-ratelimit-remaining': '0',
+    'x-ratelimit-reset': String(Math.floor(Date.UTC(2026, 0, 1, 12) / 1000)),
+  });
+  const error = await failsWith(() => fetchRepo('a/b'));
+  assert.ok(error instanceof GitHubError);
+  assert.match(error.message, /rate limit/i);
+  assert.match(error.message, /resets at/i);
+  assert.match(error.hint, /60 requests\/hour/i, 'the anonymous ceiling is the actionable part');
+});
+
+test('the rate-limit hint differs with and without a token', async () => {
+  const headers = { 'x-ratelimit-remaining': '0' };
+  globalThis.fetch = respondWith(403, headers);
+  const anonymous = await failsWith(() => fetchRepo('a/b'));
+  const withToken = await failsWith(() => fetchRepo('a/b', 'ghp_token'));
+  assert.match(anonymous.hint, /personal access token/i, 'tells you what to do');
+  assert.match(withToken.hint, /5000/, 'you already have a token; the ceiling is the news');
+});
+
+test('a 403 that is not a rate limit says so instead', async () => {
+  globalThis.fetch = respondWith(403, { 'x-ratelimit-remaining': '57' });
+  const error = await failsWith(() => fetchRepo('a/b'));
+  assert.match(error.message, /refused the request/i);
+  assert.doesNotMatch(error.message, /rate limit/i);
+});
+
+test('429 is treated as a rate limit too', async () => {
+  // GitHub uses both for secondary limits.
+  globalThis.fetch = respondWith(429, { 'x-ratelimit-remaining': '0' });
+  const error = await failsWith(() => fetchRepo('a/b'));
+  assert.match(error.message, /rate limit/i);
+});
+
+test('a missing repo names the private-repo case', async () => {
+  globalThis.fetch = respondWith(404);
+  const error = await failsWith(() => fetchRepo('a/b'));
+  assert.match(error.message, /not found/i);
+  assert.match(error.hint, /[Pp]rivate/, 'a typo and a private repo look identical from here');
+});
+
+test('a rejected token says the token is the problem', async () => {
+  globalThis.fetch = respondWith(401);
+  const error = await failsWith(() => fetchRepo('a/b', 'ghp_bad'));
+  assert.match(error.message, /401/);
+  assert.match(error.hint, /clear the field/i);
+});
+
+test('a network failure suggests the demos, which need no network', async () => {
+  globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
+  const error = await failsWith(() => fetchRepo('a/b'));
+  assert.match(error.message, /Network request/i);
+  assert.match(error.hint, /bundled demos/i);
+});
+
+test('an unexpected status still produces a GitHubError, not a raw crash', async () => {
+  for (const status of [500, 502, 418]) {
+    globalThis.fetch = respondWith(status);
+    const error = await failsWith(() => fetchRepo('a/b'));
+    assert.ok(error instanceof GitHubError, `HTTP ${status} escaped as ${error.name}`);
+    assert.match(error.message, new RegExp(String(status)));
+  }
+});
+
+test('a repo with no commits says so rather than rendering an empty island', async () => {
+  globalThis.fetch = respondWith(200, {}, []);
+  const error = await failsWith(() => fetchRepo('a/b'));
+  assert.match(error.message, /no commits/i);
+});
+
+test('every error carries a message safe to put straight in the DOM', async () => {
+  // They are rendered as text to the user, so each needs to be a sentence
+  // rather than a stack trace or an object.
+  for (const responder of [respondWith(401), respondWith(404), respondWith(500)]) {
+    globalThis.fetch = responder;
+    const error = await failsWith(() => fetchRepo('a/b'));
+    assert.equal(typeof error.message, 'string');
+    assert.ok(error.message.length > 10 && error.message.endsWith('.'), error.message);
+  }
+});
