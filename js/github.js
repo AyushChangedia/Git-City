@@ -92,9 +92,35 @@ export function validateDataset(data, label = 'dataset') {
   if (!Array.isArray(data.commits)) throw new GitHubError(`${label}: missing a "commits" array.`);
   if (data.commits.length === 0) throw new GitHubError(`${label}: contains no commits.`);
 
+  let usableFiles = 0;
+
   data.commits.forEach((c, i) => {
     if (!Array.isArray(c.files)) throw new GitHubError(`${label}: commit ${i} has no "files" array.`);
+
+    c.files.forEach((f, j) => {
+      const where = `${label}: commit ${i}, file ${j}`;
+
+      // A record with no usable path is skipped silently by both the renderer
+      // and the verifier, so a dataset full of them renders an empty city and
+      // reports nothing. Failing here is the entire point of this function.
+      if (typeof f?.path !== 'string' || !f.path.trim()) {
+        throw new GitHubError(`${where} has no "path".`);
+      }
+      if (f.status !== 'removed' && !Number.isFinite(f.lines)) {
+        // "lines": null is what a NaN line count serialises to, and the
+        // renderer turns it into a minimum-height building without complaint.
+        throw new GitHubError(`${where} ("${f.path}") has a non-numeric "lines": ${JSON.stringify(f.lines)}.`);
+      }
+      usableFiles += 1;
+    });
   });
+
+  // Every commit can legitimately be empty — a merge, a tag — but a whole
+  // dataset of them is a generator that produced nothing, and it renders as a
+  // blank screen that looks exactly like a failed load.
+  if (usableFiles === 0) {
+    throw new GitHubError(`${label}: no commit touches any file, so there is nothing to build.`);
+  }
 
   return {
     repo: data.repo || 'unknown/unknown',
