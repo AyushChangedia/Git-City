@@ -388,3 +388,48 @@ export function framing(box, aspect, azimuth = DEFAULT_AZIMUTH) {
 
   return { distance, position, target: { x: centre.x, y: centre.y + lift, z: centre.z } };
 }
+
+/* ---------------------------------------------------------------- haze -- */
+
+/**
+ * How thick the veil over the city itself should be — see hazeDensityFor.
+ *
+ * This is the constant that is actually chosen. The density is derived from it
+ * per city, because the density that looks right depends on how far back the
+ * camera had to stand, and that is a consequence of the repository's size
+ * rather than a decision anybody made.
+ */
+export const HAZE_AT_SUBJECT = 0.15;
+
+/** Solved once from HAZE_AT_SUBJECT: density = HAZE_K / framing distance. */
+export const HAZE_K = Math.sqrt(-Math.log(1 - HAZE_AT_SUBJECT));
+
+/**
+ * Bounds on the result. Below the floor there is no atmosphere at all and the
+ * horizon has a hard edge; above the ceiling a small city is looking through
+ * soup.
+ */
+export const HAZE_DENSITY_MIN = 0.0004;
+export const HAZE_DENSITY_MAX = 0.0025;
+
+/**
+ * Fog density for a camera standing `frameDistance` from the city.
+ *
+ * Solves 1 - exp(-(density * d)^2) = HAZE_AT_SUBJECT, so the veil over the
+ * subject is the same for every repository and the horizon still washes out
+ * because it is still far away. A fixed density instead puts a 15% veil on a
+ * city framed from 220 units and a 63% one on a city framed from 560 — the
+ * difference between atmosphere and a pink screen.
+ *
+ * Lives here rather than in world.js so it can be checked without a renderer,
+ * for the same reason the rest of this module does.
+ */
+export function hazeDensityFor(frameDistance) {
+  const d = Math.max(Number(frameDistance) || 0, 1);
+  return Math.min(HAZE_DENSITY_MAX, Math.max(HAZE_DENSITY_MIN, HAZE_K / d));
+}
+
+/** The share of the subject hidden by haze at a given density and distance. */
+export function veilAt(density, distance) {
+  return 1 - Math.exp(-((density * distance) ** 2));
+}
