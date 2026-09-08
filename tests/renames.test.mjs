@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { parseRawStatus, applyDeltas } = require('../scripts/fetch-history.js');
+const { parseRawStatus, applyDeltas } = require('../scripts/fetch-history.cjs');
 
 /* ------------------------------------------------- git log --raw parsing -- */
 

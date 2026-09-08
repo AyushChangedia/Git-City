@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { parseArgs, firstLine, defaultOut } = require('../scripts/fetch-history.js');
+const { parseArgs, firstLine, defaultOut } = require('../scripts/fetch-history.cjs');
 
 /* ------------------------------------------------------------ parseArgs -- */
 

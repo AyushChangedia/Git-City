@@ -1,7 +1,7 @@
 /**
- * verify.test.mjs — scripts/verify.js as a CI gate.
+ * verify.test.mjs — scripts/verify.cjs as a CI gate.
  *
- * verify.js is a command-line tool, so it is tested the way CI runs it: as a
+ * verify.cjs is a command-line tool, so it is tested the way CI runs it: as a
  * subprocess, checking the exit code and what it printed. The exit code is the
  * part that matters — a gate that exits 0 on a broken dataset is not a gate.
  */
@@ -15,7 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const VERIFY = path.join(ROOT, 'scripts', 'verify.js');
+const VERIFY = path.join(ROOT, 'scripts', 'verify.cjs');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'git-city-verify-'));
 
