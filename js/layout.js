@@ -433,3 +433,35 @@ export function hazeDensityFor(frameDistance) {
 export function veilAt(density, distance) {
   return 1 - Math.exp(-((density * distance) ** 2));
 }
+
+
+/* ----------------------------------------------------------------- sun -- */
+
+/**
+ * Where the sun is. Two degrees above the horizon, just south of west.
+ *
+ * The sky shader, the directional light and the water's specular highlight all
+ * have to agree about this. If they disagree the image reads as wrong without
+ * anybody being able to say why, so there is exactly one definition — and it
+ * is here rather than in world.js so it can be checked without a renderer.
+ */
+export const SUN_ELEVATION_DEG = 2;
+export const SUN_AZIMUTH_DEG = 175;
+
+/**
+ * The sun direction as a plain unit vector.
+ *
+ * Spherical to Cartesian in three.js's convention: polar angle measured down
+ * from +Y, azimuth measured from +Z towards +X. world.js builds a
+ * THREE.Vector3 from the same numbers.
+ */
+export function sunDirection(elevationDeg = SUN_ELEVATION_DEG, azimuthDeg = SUN_AZIMUTH_DEG) {
+  const phi = ((90 - elevationDeg) * Math.PI) / 180;
+  const theta = (azimuthDeg * Math.PI) / 180;
+  const sinPhi = Math.sin(phi);
+  return {
+    x: sinPhi * Math.sin(theta),
+    y: Math.cos(phi),
+    z: sinPhi * Math.cos(theta),
+  };
+}

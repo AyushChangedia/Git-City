@@ -15,18 +15,22 @@ import { makeWaterNormalsFallback, makeFacade, WINDOW_TILE_UNITS } from './textu
 import {
   FOOTPRINT, CHANNEL_HALF, boxSize, boxCenter,
   HAZE_AT_SUBJECT, HAZE_K, hazeDensityFor, MIN_FRAME_DISTANCE,
+  SUN_ELEVATION_DEG, SUN_AZIMUTH_DEG, sunDirection,
 } from './layout.js';
 
 /* ----------------------------------------------------------------- sun -- */
 
-export const SUN_ELEVATION_DEG = 2;
-export const SUN_AZIMUTH_DEG = 175;
+export { SUN_ELEVATION_DEG, SUN_AZIMUTH_DEG };
 
-/** The one true sun direction, as a unit vector. */
+/**
+ * The one true sun direction, as a THREE.Vector3.
+ *
+ * The angles and the arithmetic live in layout.js so they can be checked
+ * without a renderer; this only puts the result in the type three.js wants.
+ */
 export function sunVector() {
-  const phi = THREE.MathUtils.degToRad(90 - SUN_ELEVATION_DEG);
-  const theta = THREE.MathUtils.degToRad(SUN_AZIMUTH_DEG);
-  return new THREE.Vector3().setFromSphericalCoords(1, phi, theta);
+  const { x, y, z } = sunDirection();
+  return new THREE.Vector3(x, y, z);
 }
 
 /* --------------------------------------------------------------- world -- */
