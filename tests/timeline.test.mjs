@@ -256,3 +256,52 @@ test('count reports the loaded history', () => {
   assert.equal(make().timeline.count, 10);
   assert.equal(make([]).timeline.count, 0);
 });
+
+test('a speed of zero is refused rather than freezing playback', () => {
+  // Accepting it leaves `playing` true while nothing ever advances: the UI
+  // says playing and the city sits still, with no error to notice.
+  const { timeline, applied } = make();
+  timeline.play();
+  timeline.setSpeed(0);
+  timeline.tick(timeline.msPerCommit * 5);
+  assert.equal(timeline.speed, 1, 'the previous speed is kept');
+  assert.ok(applied.length > 0, 'playback continued');
+});
+
+test('a negative speed is refused', () => {
+  const { timeline, applied } = make();
+  timeline.play();
+  timeline.setSpeed(-2);
+  timeline.tick(timeline.msPerCommit * 3);
+  assert.equal(timeline.speed, 1);
+  assert.ok(applied.length > 0);
+});
+
+test('a non-numeric speed cannot poison the accumulator', () => {
+  // The nasty one: once the accumulator is NaN, NaN >= step is false forever,
+  // so playback stays dead even after the speed is put back to 1.
+  const { timeline, applied } = make();
+  timeline.play();
+  for (const bad of [NaN, undefined, null, 'fast', {}]) timeline.setSpeed(bad);
+  timeline.tick(timeline.msPerCommit * 2);
+  assert.equal(timeline.speed, 1);
+  assert.deepEqual(applied, [0, 1]);
+});
+
+test('a numeric string speed is accepted, since that is what a range input gives', () => {
+  const { timeline, applied } = make();
+  timeline.play();
+  timeline.setSpeed('2');
+  timeline.tick(timeline.msPerCommit);
+  assert.equal(timeline.speed, 2);
+  assert.deepEqual(applied, [0, 1]);
+});
+
+test('a non-finite frame delta is ignored rather than killing playback', () => {
+  // The first frame after a resume can arrive with no previous timestamp.
+  const { timeline, applied } = make();
+  timeline.play();
+  timeline.tick(NaN);
+  timeline.tick(timeline.msPerCommit * 2);
+  assert.deepEqual(applied, [0, 1], 'the timeline recovered');
+});

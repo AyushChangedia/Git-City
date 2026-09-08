@@ -63,8 +63,22 @@ export class Timeline {
 
   toggle() { this.playing ? this.pause() : this.play(); }
 
+  /**
+   * Playback rate. Zero and below are refused rather than accepted.
+   *
+   * A speed of 0 leaves `playing` true while the accumulator never reaches a
+   * step, so the UI says playing and the city sits still — a deadlock with no
+   * error and no way to tell it from a very long step. A negative speed does
+   * the same and never recovers. NaN is worse: it poisons the accumulator, and
+   * because NaN >= step is false forever, playback stays dead even after the
+   * speed is set back to 1.
+   *
+   * Pausing is what "stop advancing" means here, and it is a button already.
+   */
   setSpeed(speed) {
-    this.speed = speed;
+    const next = Number(speed);
+    if (!Number.isFinite(next) || next <= 0) return;
+    this.speed = next;
     this._onChange();
   }
 
@@ -82,7 +96,13 @@ export class Timeline {
   tick(deltaMs) {
     if (!this.playing || !this.commits.length) return;
 
-    this._accumulator += deltaMs * this.speed;
+    // A non-finite delta comes from a first frame with no previous timestamp.
+    // Adding it would poison the accumulator permanently, since NaN >= step is
+    // false for every future frame.
+    const advance = Number(deltaMs) * this.speed;
+    if (!Number.isFinite(advance)) return;
+
+    this._accumulator += advance;
     const step = this.msPerCommit;
 
     // Cap the catch-up burst so a stalled tab does not replay the whole repo
