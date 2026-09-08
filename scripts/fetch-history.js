@@ -126,6 +126,12 @@ function parseRawStatus(line) {
 }
 
 /** Apply one commit's per-file deltas to the running totals, return file records. */
+/** A line count from a source that may not have one. Binary files have none. */
+function count(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
 function applyDeltas(totals, changes) {
   const files = [];
   for (const c of changes) {
@@ -146,7 +152,11 @@ function applyDeltas(totals, changes) {
       if (carried && !totals.has(c.path)) totals.set(c.path, carried);
     }
     const known = totals.has(c.path);
-    const next = Math.max(1, (totals.get(c.path) || 0) + c.additions - c.deletions);
+    // Math.max(1, NaN) is NaN, not 1 — the floor does not floor. So one
+    // missing count does not clamp to the minimum, it produces "lines": null
+    // in the dataset, and the browser then reads that back as a
+    // minimum-height building with no indication anything went wrong.
+    const next = Math.max(1, (totals.get(c.path) || 0) + count(c.additions) - count(c.deletions));
     totals.set(c.path, next);
     files.push({
       path: c.path,

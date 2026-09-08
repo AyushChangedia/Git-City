@@ -111,3 +111,63 @@ test('replaying a rename leaves exactly one building standing', () => {
   replay([{ path: 'src/new.js', previousPath: 'src/old.js', status: 'modified', additions: 0, deletions: 0 }]);
   assert.deepEqual([...standing.keys()], ['src/new.js']);
 });
+
+/* --------------------------------------------------------- line counting -- */
+
+test('a running total accumulates across commits', () => {
+  const totals = new Map();
+  applyDeltas(totals, [{ path: 'a.js', additions: 100, deletions: 0 }]);
+  applyDeltas(totals, [{ path: 'a.js', additions: 50, deletions: 20 }]);
+  assert.equal(totals.get('a.js'), 130);
+});
+
+test('a file cannot shrink below one line', () => {
+  // Zero would be a building of no height, which reads as a hole in the city.
+  const totals = new Map([['a.js', 50]]);
+  const [file] = applyDeltas(totals, [{ path: 'a.js', additions: 0, deletions: 9999 }]);
+  assert.equal(file.lines, 1);
+});
+
+test('a missing count is treated as no change rather than poisoning the total', () => {
+  // Math.max(1, NaN) is NaN, not 1 — the floor does not floor. One absent
+  // count used to write "lines": null into the dataset, and the browser read
+  // that back as a minimum-height building with nothing to say why.
+  for (const change of [
+    { path: 'a.js', additions: undefined, deletions: 0 },
+    { path: 'a.js', additions: 10, deletions: undefined },
+    { path: 'a.js', additions: null, deletions: null },
+    { path: 'a.js', additions: '-', deletions: '-' },
+    { path: 'a.js' },
+  ]) {
+    const [file] = applyDeltas(new Map(), [change]);
+    assert.ok(Number.isFinite(file.lines), `${JSON.stringify(change)} gave ${file.lines}`);
+    assert.ok(file.lines >= 1);
+  }
+});
+
+test('every line count survives a JSON round trip as a number', () => {
+  // The dataset is written with JSON.stringify, which turns NaN into null.
+  const files = applyDeltas(new Map(), [
+    { path: 'a.js', additions: 10, deletions: 0 },
+    { path: 'b.js', additions: undefined, deletions: 0 },
+  ]);
+  for (const file of JSON.parse(JSON.stringify(files))) {
+    assert.equal(typeof file.lines, 'number', `${file.path} serialised as ${file.lines}`);
+  }
+});
+
+test('a file removed and then re-added starts over', () => {
+  const totals = new Map([['a.js', 500]]);
+  const files = applyDeltas(totals, [
+    { path: 'a.js', status: 'removed' },
+    { path: 'a.js', additions: 20, deletions: 0 },
+  ]);
+  assert.deepEqual(files.map((f) => f.status), ['removed', 'added']);
+  assert.equal(files[1].lines, 20, 'the old total should not carry over');
+});
+
+test('the first sighting of a file is added, later ones are modified', () => {
+  const totals = new Map();
+  assert.equal(applyDeltas(totals, [{ path: 'a.js', additions: 5, deletions: 0 }])[0].status, 'added');
+  assert.equal(applyDeltas(totals, [{ path: 'a.js', additions: 5, deletions: 0 }])[0].status, 'modified');
+});
