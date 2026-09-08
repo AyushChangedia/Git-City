@@ -41,16 +41,56 @@ const MESSAGE_MAX = 80;
 
 /* ------------------------------------------------------------------ utils */
 
+/** Flags that take a value; anything else with `--` is a mistake worth naming. */
+const VALUE_FLAGS = new Set(['git', 'repo', 'out', 'token', 'limit']);
+
+/**
+ * Parse the command line, refusing anything malformed rather than guessing.
+ *
+ * The previous version took `argv[++i]` whatever it was. Three ways that went
+ * wrong, all silent:
+ *
+ *   --limit           the key was set to undefined, which made the
+ *                     `!== undefined` guard below skip the Number() conversion
+ *                     AND wiped the HARD_CAP default. Downstream,
+ *                     Math.min(undefined, HARD_CAP) is NaN, `n < NaN` is false,
+ *                     and the fetch loop never ran — zero commits, reported as
+ *                     "No commits found" with no hint that the flag was at fault
+ *   --limit abc       Number('abc') is NaN, same dead loop
+ *   --repo --synthetic  the next flag was swallowed as the value, so the repo
+ *                     was literally the string "--synthetic" and --synthetic
+ *                     never took effect
+ */
 function parseArgs(argv) {
   const args = { limit: HARD_CAP };
+
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--synthetic') args.synthetic = true;
-    else if (a === '--help' || a === '-h') args.help = true;
-    else if (a.startsWith('--')) args[a.slice(2)] = argv[++i];
-    else throw new Error(`Unexpected argument: ${a}`);
+
+    if (a === '--synthetic') { args.synthetic = true; continue; }
+    if (a === '--help' || a === '-h') { args.help = true; continue; }
+
+    if (!a.startsWith('--')) throw new Error(`Unexpected argument: ${a}`);
+
+    const name = a.slice(2);
+    if (!VALUE_FLAGS.has(name)) {
+      throw new Error(`Unknown option: ${a}. Run with --help to see the options.`);
+    }
+
+    const value = argv[i + 1];
+    if (value === undefined || value.startsWith('--')) {
+      throw new Error(`${a} needs a value.`);
+    }
+    args[name] = value;
+    i++;
   }
-  if (args.limit !== undefined) args.limit = Number(args.limit);
+
+  const limit = Number(args.limit);
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new Error(`--limit needs a whole number of commits, not "${args.limit}".`);
+  }
+  args.limit = limit;
+
   return args;
 }
 
@@ -473,4 +513,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseRawStatus, applyDeltas };
+module.exports = { parseArgs, firstLine, defaultOut, parseRawStatus, applyDeltas };
