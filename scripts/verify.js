@@ -58,10 +58,26 @@ function readDataset(file) {
     throw new Error(`is not valid JSON — ${err.message}`);
   }
 
-  if (!data || typeof data !== 'object') throw new Error('is not a JSON object');
-  if (!Array.isArray(data.commits)) throw new Error('has no "commits" array');
-  if (data.commits.length === 0) throw new Error('contains no commits');
   return data;
+}
+
+/**
+ * Check a dataset the way the browser will.
+ *
+ * This used to be a second, looser set of structural checks written out here —
+ * an object, a commits array, not empty. It let through everything
+ * validateDataset catches inside a file record, so a dataset could pass verify
+ * and then fail to load in the app, which is the one thing this script exists
+ * to rule out. Same function, same errors, no drift.
+ */
+function validate(data, label, validateDataset) {
+  try {
+    validateDataset(data, label);
+  } catch (err) {
+    // GitHubError's message is already "<label>: what is wrong", and the
+    // caller prefixes the label itself, so hand back just the reason.
+    throw new Error(String(err.message).replace(`${label}: `, ''));
+  }
 }
 
 /** One dataset: replay it, measure it, print it. Throws with a plain message. */
@@ -138,9 +154,9 @@ ${'─'.repeat(62)}
 }
 
 async function main() {
-  const L = await import(
-    require('url').pathToFileURL(path.join(__dirname, '..', 'js', 'layout.js')).href
-  );
+  const toUrl = (file) => require('url').pathToFileURL(path.join(__dirname, '..', 'js', file)).href;
+  const L = await import(toUrl('layout.js'));
+  const { validateDataset } = await import(toUrl('github.js'));
 
   const targets = process.argv.slice(2).length
     ? process.argv.slice(2)
@@ -157,7 +173,9 @@ async function main() {
     // meant the first broken file ended the run, so the datasets after it were
     // never looked at and a green line was never proof that they were fine.
     try {
-      if (!checkDataset(L, file, readDataset(file))) {
+      const data = readDataset(file);
+      validate(data, label, validateDataset);
+      if (!checkDataset(L, file, data)) {
         failures.push(`${label}: footprint outside the ${MIN_FOOTPRINT}–${MAX_FOOTPRINT} band`);
       }
     } catch (err) {
