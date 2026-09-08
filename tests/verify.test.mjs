@@ -1,7 +1,7 @@
 /**
- * verify.test.mjs — scripts/verify.js as a CI gate.
+ * verify.test.mjs — scripts/verify.cjs as a CI gate.
  *
- * verify.js is a command-line tool, so it is tested the way CI runs it: as a
+ * verify.cjs is a command-line tool, so it is tested the way CI runs it: as a
  * subprocess, checking the exit code and what it printed. The exit code is the
  * part that matters — a gate that exits 0 on a broken dataset is not a gate.
  */
@@ -15,7 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const VERIFY = path.join(ROOT, 'scripts', 'verify.js');
+const VERIFY = path.join(ROOT, 'scripts', 'verify.cjs');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'git-city-verify-'));
 
@@ -118,7 +118,8 @@ test('a file that is not JSON says so', () => {
 test('a dataset with no commits array says so', () => {
   const { code, out } = run(dataset('nocommits.json', { repo: 'demo/x' }));
   assert.equal(code, 1);
-  assert.match(out, /has no "commits" array/);
+  // The wording is validateDataset's, because that is now the one check.
+  assert.match(out, /missing a "commits" array/);
   assert.doesNotMatch(out, /is not iterable/);
 });
 
@@ -131,7 +132,7 @@ test('a dataset with an empty commits array says so', () => {
 test('a JSON file holding an array rather than an object says so', () => {
   const { code, out } = run(dataset('array.json', [1, 2, 3]));
   assert.equal(code, 1);
-  assert.match(out, /has no "commits" array/);
+  assert.match(out, /missing a "commits" array/);
 });
 
 /* ------------------------------------------------------ one bad, many good -- */
@@ -145,7 +146,7 @@ test('a broken dataset does not stop the ones after it being checked', () => {
 
   const { code, out } = run(broken, good);
   assert.equal(code, 1);
-  assert.match(out, /has no "commits" array/);
+  assert.match(out, /missing a "commits" array/);
   assert.match(out, /demo\/healthy/, 'the second dataset was never measured');
   assert.match(out, /1 of 2 dataset\(s\) failed/);
 });
@@ -166,4 +167,43 @@ test('the failing dataset is named, so it can be found', () => {
   const { code, out } = run(dataset('named-badly.json', { repo: 'demo/x' }));
   assert.equal(code, 1);
   assert.match(out, /named-badly\.json/);
+});
+
+/* -------------------------------------------- agreement with the browser -- */
+
+test('a dataset the browser would reject is rejected here too', () => {
+  // The point of this script is that a dataset which passes it will load. It
+  // had its own looser structural checks, so anything validateDataset catches
+  // inside a file record passed verify and then failed in the app.
+  const cases = [
+    ['no path', { path: undefined, lines: 10 }, /has no "path"/],
+    ['null lines', { path: 'a.js', lines: null }, /non-numeric "lines"/],
+    ['string lines', { path: 'a.js', lines: '10' }, /non-numeric "lines"/],
+  ];
+  for (const [name, file, expected] of cases) {
+    const { code, out } = run(
+      dataset(`browser-${name.replace(/\s/g, '-')}.json`, {
+        repo: 'demo/x',
+        commits: [{ files: [file] }],
+      }),
+    );
+    assert.equal(code, 1, `${name} was accepted`);
+    assert.match(out, expected, name);
+  }
+});
+
+test('the failure names the commit and file, not just the dataset', () => {
+  const { out } = run(
+    dataset('located.json', {
+      repo: 'demo/x',
+      commits: [{ files: [{ path: 'good.js', lines: 1 }] }, { files: [{ lines: 2 }] }],
+    }),
+  );
+  assert.match(out, /commit 1, file 0/);
+});
+
+test('the bundled datasets pass the browser check as well as the geometry one', () => {
+  // Which is the claim the whole script rests on.
+  const { code, out } = run();
+  assert.equal(code, 0, out);
 });

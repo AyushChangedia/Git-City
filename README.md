@@ -264,13 +264,13 @@ demo to the dropdown is a data change, not a code change:
 
 ## Generating data for your own repo
 
-`scripts/fetch-history.js` needs Node 18+ and has no dependencies.
+`scripts/fetch-history.cjs` needs Node 18+ and has no dependencies.
 
 ### From a clone (recommended)
 
 ```bash
-node scripts/fetch-history.js --git https://github.com/axios/axios
-node scripts/fetch-history.js --git ../my-local-checkout --out data/mine.json
+node scripts/fetch-history.cjs --git https://github.com/axios/axios
+node scripts/fetch-history.cjs --git ../my-local-checkout --out data/mine.json
 ```
 
 This clones once and walks the **full** history with `git log --numstat`, so
@@ -282,7 +282,7 @@ detection is off, so a rename reads as a demolition plus a new building.
 ### From the GitHub API
 
 ```bash
-node scripts/fetch-history.js --repo axios/axios --token $GITHUB_TOKEN
+node scripts/fetch-history.cjs --repo axios/axios --token $GITHUB_TOKEN
 ```
 
 Portable, but the changed-file list costs **one request per commit**: 300
@@ -293,7 +293,7 @@ older than the window are never fetched. Capped at 300 commits.
 ### Synthetic
 
 ```bash
-node scripts/fetch-history.js --synthetic
+node scripts/fetch-history.cjs --synthetic
 ```
 
 Writes `sample/demo-repo` — 120 commits across 61 files in 6 folders, from a
@@ -307,10 +307,10 @@ Then add the file to `data/manifest.json` and it shows up in the dropdown.
 ## Verifying without rendering
 
 ```bash
-$ node scripts/verify.js
+$ node scripts/verify.cjs
 ```
 
-`scripts/verify.js` imports **`js/layout.js` — the same module the browser
+`scripts/verify.cjs` imports **`js/layout.js` — the same module the browser
 uses** — and replays a dataset in Node to print what the renderer will produce.
 The verifier and the renderer cannot disagree about where a building goes or
 where the camera ends up.
@@ -357,8 +357,8 @@ project keeps its no-build-step, no-install promise the whole way through —
 
 What is covered is the part with no visible failure mode: the pure geometry in
 `js/layout.js`, the camera fit across city shapes and window aspects, the commit
-replay in `scripts/fetch-history.js`, the REST paging and error handling in
-`js/github.js`, and `scripts/verify.js` driven as a subprocess the way CI runs
+replay in `scripts/fetch-history.cjs`, the REST paging and error handling in
+`js/github.js`, and `scripts/verify.cjs` driven as a subprocess the way CI runs
 it. A wrong number in any of those does not throw — it renders a city that is
 quietly the wrong shape, which is the kind of bug nobody notices.
 
@@ -401,8 +401,8 @@ js/github.js               dataset loading, live API, rate-limit handling
 assets/waternormals.jpg    water normal map (three.js, MIT) — committed, not hotlinked
 data/*.json                pre-generated commit data
 data/manifest.json         which datasets appear in the dropdown
-scripts/fetch-history.js   dataset generator
-scripts/verify.js          headless geometry check
+scripts/fetch-history.cjs   dataset generator
+scripts/verify.cjs          headless geometry check
 tests/*.test.mjs           unit suite, node:test, no dependencies
 .github/workflows/ci.yml   runs both checks on push and pull request
 ```

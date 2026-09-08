@@ -12,18 +12,25 @@ import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { Water } from 'three/addons/objects/Water.js';
 import { makeWaterNormalsFallback, makeFacade, WINDOW_TILE_UNITS } from './textures.js';
-import { FOOTPRINT, CHANNEL_HALF, boxSize, boxCenter } from './layout.js';
+import {
+  FOOTPRINT, CHANNEL_HALF, boxSize, boxCenter,
+  HAZE_AT_SUBJECT, HAZE_K, hazeDensityFor, MIN_FRAME_DISTANCE,
+  SUN_ELEVATION_DEG, SUN_AZIMUTH_DEG, sunDirection,
+} from './layout.js';
 
 /* ----------------------------------------------------------------- sun -- */
 
-export const SUN_ELEVATION_DEG = 2;
-export const SUN_AZIMUTH_DEG = 175;
+export { SUN_ELEVATION_DEG, SUN_AZIMUTH_DEG };
 
-/** The one true sun direction, as a unit vector. */
+/**
+ * The one true sun direction, as a THREE.Vector3.
+ *
+ * The angles and the arithmetic live in layout.js so they can be checked
+ * without a renderer; this only puts the result in the type three.js wants.
+ */
 export function sunVector() {
-  const phi = THREE.MathUtils.degToRad(90 - SUN_ELEVATION_DEG);
-  const theta = THREE.MathUtils.degToRad(SUN_AZIMUTH_DEG);
-  return new THREE.Vector3().setFromSphericalCoords(1, phi, theta);
+  const { x, y, z } = sunDirection();
+  return new THREE.Vector3(x, y, z);
 }
 
 /* --------------------------------------------------------------- world -- */
@@ -48,21 +55,13 @@ const FILLER_TARGET = 3000;
 export const FOG_COLOR = 0xd8a8b8;
 
 /**
- * Haze is specified as a density, but the right density depends on how far
- * back the camera is standing — and that is derived from the size of the
- * repository, not chosen. A fixed 0.0018 puts a 15% veil on a city framed from
- * 220 units and a 63% one on a city framed from 560, which is the difference
- * between atmosphere and a pink screen.
- *
- * So the constant here is the veil over the *subject*, and the density is
- * solved for each city:  1 - exp(-(density * d)^2) = HAZE_AT_SUBJECT.
- * At the minimum framing distance this reproduces 0.0018 exactly; a sprawling
- * repo that has to be framed from further back gets proportionally thinner
- * haze, and the horizon still washes out because it is still far away.
+ * Haze. The maths lives in layout.js so it can be verified without a renderer;
+ * see hazeDensityFor there for why the density is derived per city rather than
+ * chosen. Re-exported here because this is the module that owns the fog.
  */
-export const HAZE_AT_SUBJECT = 0.15;
-const HAZE_K = Math.sqrt(-Math.log(1 - HAZE_AT_SUBJECT));
-export const FOG_DENSITY = HAZE_K / 220;   // ≈ 0.0018 at MIN_FRAME_DISTANCE
+export { HAZE_AT_SUBJECT, HAZE_K };
+
+export const FOG_DENSITY = hazeDensityFor(MIN_FRAME_DISTANCE);
 
 export class World {
   constructor(scene, renderer) {
@@ -579,8 +578,7 @@ export class World {
    * over the city is what stays constant, not the density.
    */
   setHaze(frameDistance) {
-    const d = Math.max(frameDistance, 1);
-    this.scene.fog.density = Math.min(0.0025, Math.max(0.0004, HAZE_K / d));
+    this.scene.fog.density = hazeDensityFor(frameDistance);
   }
 
   update(deltaSeconds) {
