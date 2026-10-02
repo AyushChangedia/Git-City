@@ -13,6 +13,7 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import { Water } from 'three/addons/objects/Water.js';
 import { makeWaterNormalsFallback, makeFacade, WINDOW_TILE_UNITS } from './textures.js';
 import { mulberry32 } from './random.js';
+import { collapseGaps, fillerReach, lampSpots } from './streets.js';
 import {
   FOOTPRINT, CHANNEL_HALF, boxSize, boxCenter,
   HAZE_AT_SUBJECT, HAZE_K, hazeDensityFor, MIN_FRAME_DISTANCE,
@@ -225,7 +226,7 @@ export class World {
     });
     this._materials.push(surface, paint);
 
-    const lampSpots = [];
+    const lamps = [];
     this._lanes = [];
 
     for (const bank of plan.banks) {
@@ -247,16 +248,16 @@ export class World {
       for (const [a, b] of gapsX) {
         this._addRoad(surface, paint, (a + b) / 2, (z0 + z1) / 2, b - a, z1 - z0, false);
         this._lanes.push({ axis: 'z', fixed: (a + b) / 2, from: z0, to: z1, width: b - a });
-        collectLamps(lampSpots, z0, z1, LAMP_SPACING, (t) => [[a + 1.2, t], [b - 1.2, t]]);
+        lamps.push(...lampSpots(z0, z1, LAMP_SPACING, (t) => [[a + 1.2, t], [b - 1.2, t]]));
       }
       for (const [a, b] of gapsZ) {
         this._addRoad(surface, paint, (x0 + x1) / 2, (a + b) / 2, x1 - x0, b - a, true);
         this._lanes.push({ axis: 'x', fixed: (a + b) / 2, from: x0, to: x1, width: b - a });
-        collectLamps(lampSpots, x0, x1, LAMP_SPACING, (t) => [[t, a + 1.2], [t, b - 1.2]]);
+        lamps.push(...lampSpots(x0, x1, LAMP_SPACING, (t) => [[t, a + 1.2], [t, b - 1.2]]));
       }
     }
 
-    this._addLamps(lampSpots);
+    this._addLamps(lamps);
     this._addTraffic();
   }
 
@@ -592,34 +593,3 @@ export class World {
 
 const UP = new THREE.Vector3(0, 1, 0);
 
-/** How far the filler skyline spreads from the city centre. */
-function fillerReach(size) {
-  return Math.max(size.x, size.z) * 1.5 + 650;
-}
-
-/**
- * Given a set of 1D intervals, return the gaps between the merged runs.
- * Turns "where the districts are" into "where the roads go".
- */
-function collapseGaps(intervals) {
-  const sorted = [...intervals].sort((a, b) => a[0] - b[0]);
-  const merged = [];
-  for (const [a, b] of sorted) {
-    const last = merged[merged.length - 1];
-    if (last && a <= last[1] + 0.001) last[1] = Math.max(last[1], b);
-    else merged.push([a, b]);
-  }
-  const gaps = [];
-  for (let i = 1; i < merged.length; i++) {
-    const a = merged[i - 1][1];
-    const b = merged[i][0];
-    if (b - a > 1) gaps.push([a, b]);
-  }
-  return gaps;
-}
-
-function collectLamps(out, from, to, spacing, place) {
-  for (let t = from + spacing / 2; t < to; t += spacing) {
-    for (const spot of place(t)) out.push(spot);
-  }
-}
