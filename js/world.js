@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { Water } from 'three/addons/objects/Water.js';
 import { makeWaterNormalsFallback, makeFacade, WINDOW_TILE_UNITS } from './textures.js';
+import { mulberry32 } from './random.js';
 import {
   FOOTPRINT, CHANNEL_HALF, boxSize, boxCenter,
   HAZE_AT_SUBJECT, HAZE_K, hazeDensityFor, MIN_FRAME_DISTANCE,
@@ -594,16 +595,6 @@ const UP = new THREE.Vector3(0, 1, 0);
 /** How far the filler skyline spreads from the city centre. */
 function fillerReach(size) {
   return Math.max(size.x, size.z) * 1.5 + 650;
-}
-
-function mulberry32(seed) {
-  return function () {
-    seed |= 0;
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
 }
 
 /**

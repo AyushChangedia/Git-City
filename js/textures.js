@@ -16,6 +16,8 @@
 
 import * as THREE from 'three';
 
+import { mulberry32 } from './random.js';
+
 /**
  * One facade tile spans this many world units. It matches the building
  * footprint, so a tile wraps exactly once around a face and the window columns
@@ -78,16 +80,6 @@ const STYLE = {
 };
 
 /** Deterministic PRNG, so every reload lights the same windows. */
-function mulberry32(seed) {
-  return function () {
-    seed |= 0;
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 function canvas2d(size) {
   const c = document.createElement('canvas');
   c.width = c.height = size;
