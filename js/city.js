@@ -17,9 +17,11 @@ import {
 import { makeFacade, makeRoofTexture, FACADE_STYLES, WINDOW_TILE_UNITS } from './textures.js';
 import { LANDMARK_COUNT, allPaths, landmarks, peakOfAll } from './history.js';
 import {
-  SEGMENT_SPLIT,
   coolnessAt, hashOf, podiumWidthFor, shadeFor, shapeFor, styleFor, widthFor,
 } from './variation.js';
+import {
+  SPIRE_FRACTION, at, boxesFor, progress, topOf,
+} from './stack.js';
 
 export * from './layout.js';
 
@@ -36,18 +38,11 @@ const FOUNDATION_HEIGHT = 0.12;
 const EMISSIVE_WINDOW = new THREE.Color('#ffd9a0');
 const WINDOW_EMISSIVE_INTENSITY = 1.0;
 
-/**
- * A tall building is three boxes, each 85% the width of the one below.
- * A single extruded box is a bar; a setback taper is a tower.
- */
-const TAPER_RATIO = 0.85;
 
 const SPIRE_COUNT = LANDMARK_COUNT;   // spires go on the tallest few, as landmarks
 
 const _tint = new THREE.Color();
 
-const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
-const clamp01 = (t) => (t < 0 ? 0 : t > 1 ? 1 : t);
 
 export class City {
   constructor() {
@@ -222,16 +217,16 @@ export class City {
       let settled = true;
 
       if (b.hStart !== null) {
-        const e = easeOutCubic(clamp01((now - b.hStart) / TWEEN_MS));
-        b.height = b.h0 + (b.h1 - b.h0) * e;
+        const e = progress(now, b.hStart, TWEEN_MS);
+        b.height = at(b.h0, b.h1, e);
         this._shapeTo(b, b.height);
         if (e >= 1) b.hStart = null; else settled = false;
       }
 
       if (b.pStart !== null) {
-        const e = easeOutCubic(clamp01((now - b.pStart) / TWEEN_MS));
-        b.group.position.x = b.px0 + (b.px1 - b.px0) * e;
-        b.group.position.z = b.pz0 + (b.pz1 - b.pz0) * e;
+        const e = progress(now, b.pStart, TWEEN_MS);
+        b.group.position.x = at(b.px0, b.px1, e);
+        b.group.position.z = at(b.pz0, b.pz1, e);
         if (e >= 1) b.pStart = null; else settled = false;
       }
 
@@ -442,34 +437,20 @@ export class City {
    * storeys stretch as the building grows is the thing that reads as a bar.
    */
   _shapeTo(b, height) {
-    const h = Math.max(height, 1e-4);
-    let i = 0;
-    let y = 0;
-
-    if (b.hasPodium) {
-      const podiumHeight = Math.max(Math.min(h * 0.2, 3.5), 1e-4);
-      this._shapePart(b.parts[i++], b.podiumWidth, podiumHeight, y);
-      y += podiumHeight;
+    const boxes = boxesFor(height, b, b.width, b.podiumWidth);
+    for (const [i, box] of boxes.entries()) {
+      this._shapePart(b.parts[i], box.width, box.height, box.y);
     }
 
-    const shaft = Math.max(h - y, 1e-4);
-    const tiers = b.tiers;
-    for (let t = 0; t < tiers; t++) {
-      const fraction = tiers === 1 ? 1 : SEGMENT_SPLIT[t];
-      const segHeight = Math.max(shaft * fraction, 1e-4);
-      const width = b.width * Math.pow(TAPER_RATIO, t);
-      this._shapePart(b.parts[i++], width, segHeight, y);
-      y += segHeight;
-    }
-
-    for (const mesh of b.roofBoxes) mesh.position.y = h;
+    const roof = topOf(boxes);
+    for (const mesh of b.roofBoxes) mesh.position.y = roof;
 
     if (b.spire) {
-      const spireHeight = Math.max(h * 0.22, 0.001);
+      const spireHeight = Math.max(roof * SPIRE_FRACTION, 0.001);
       b.spire.scale.set(1, spireHeight, 1);
-      b.spire.position.y = h;
-      b.tip.position.y = h + spireHeight;
-      b.tip.scale.setScalar(Math.min(1, h / 20));
+      b.spire.position.y = roof;
+      b.tip.position.y = roof + spireHeight;
+      b.tip.scale.setScalar(Math.min(1, roof / 20));
     }
   }
 
