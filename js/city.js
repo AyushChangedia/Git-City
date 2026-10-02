@@ -11,16 +11,19 @@
 
 import * as THREE from 'three';
 import {
-  FOOTPRINT, HEIGHT_MIN, TAPER_HEIGHT, heightForLines, layout,
+  FOOTPRINT, HEIGHT_MIN, heightForLines, layout,
   cityBounds, boxSize, boxCenter,
 } from './layout.js';
 import { makeFacade, makeRoofTexture, FACADE_STYLES, WINDOW_TILE_UNITS } from './textures.js';
 import { LANDMARK_COUNT, allPaths, landmarks, peakOfAll } from './history.js';
+import {
+  SEGMENT_SPLIT,
+  coolnessAt, hashOf, podiumWidthFor, shadeFor, shapeFor, styleFor, widthFor,
+} from './variation.js';
 
 export * from './layout.js';
 
 const TWEEN_MS = 300;
-const HEAT_COMMITS = 20;
 
 const COLOR_HOT = new THREE.Color('#ff6b35');
 const COLOR_BASE = new THREE.Color('#4a5568');
@@ -34,23 +37,10 @@ const EMISSIVE_WINDOW = new THREE.Color('#ffd9a0');
 const WINDOW_EMISSIVE_INTENSITY = 1.0;
 
 /**
- * Buildings vary in width within their plot. A block of identical squares on a
- * regular grid reads as a chart however it is textured; real streets have gaps
- * of different sizes. The plot itself never changes — this only decides how
- * much of it the building fills.
- */
-const WIDTH_MIN = 0.74;
-const WIDTH_RANGE = 0.26;
-
-/** Above this a building gets a podium: a wider two-or-three storey base. */
-const PODIUM_HEIGHT = 12;
-
-/**
  * A tall building is three boxes, each 85% the width of the one below.
  * A single extruded box is a bar; a setback taper is a tower.
  */
 const TAPER_RATIO = 0.85;
-const SEGMENT_SPLIT = [0.46, 0.32, 0.22];
 
 const SPIRE_COUNT = LANDMARK_COUNT;   // spires go on the tallest few, as landmarks
 
@@ -58,16 +48,6 @@ const _tint = new THREE.Color();
 
 const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
 const clamp01 = (t) => (t < 0 ? 0 : t > 1 ? 1 : t);
-
-/** Stable per-path hash, so a building looks the same on every reload. */
-function hashOf(path) {
-  let h = 2166136261;
-  for (let i = 0; i < path.length; i++) {
-    h ^= path.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
 
 export class City {
   constructor() {
@@ -366,11 +346,11 @@ export class City {
 
     const b = {
       path, group, hash,
-      style: hash % FACADE_STYLES.length,
+      style: styleFor(hash, FACADE_STYLES.length),
       // How much of its 3x3 plot this building fills, and how much wider its
       // podium is. Both fixed per path, so a file always looks like itself.
-      width: FOOTPRINT * (WIDTH_MIN + ((hash >>> 4) % 1000) / 1000 * WIDTH_RANGE),
-      shade: 0.9 + ((hash >>> 14) % 1000) / 1000 * 0.2,
+      width: widthFor(hash),
+      shade: shadeFor(hash),
       parts: [],          // { mesh, material, map, emissiveMap }
       roofBoxes: [],
       spire: null,
@@ -383,7 +363,7 @@ export class City {
       dying: false,
       placed: false,
     };
-    b.podiumWidth = Math.min(FOOTPRINT, b.width * 1.22);
+    b.podiumWidth = podiumWidthFor(b.width);
 
     this.buildings.set(path, b);
     this.group.add(group);
@@ -411,8 +391,7 @@ export class City {
    * setback tiers on top of that.
    */
   _buildParts(b, targetHeight) {
-    const tiers = targetHeight > TAPER_HEIGHT ? SEGMENT_SPLIT.length : 1;
-    const hasPodium = targetHeight > PODIUM_HEIGHT;
+    const { tiers, hasPodium, parts: partCount } = shapeFor(targetHeight);
     if (tiers === b.tiers && hasPodium === b.hasPodium && b.parts.length) return;
 
     for (const p of b.parts) {
@@ -425,8 +404,7 @@ export class City {
     b.parts = [];
     b.roofBoxes = [];
 
-    const count = tiers + (hasPodium ? 1 : 0);
-    for (let i = 0; i < count; i++) this._addPart(b);
+    for (let i = 0; i < partCount; i++) this._addPart(b);
 
     // Clutter on the low-rise roofs: plant, lift housing, water tanks. Cheap,
     // and it breaks up the flat tops that make a skyline look extruded.
@@ -566,7 +544,7 @@ export class City {
    */
   _refreshHeat() {
     for (const b of this.buildings.values()) {
-      const cool = clamp01((this.commitIndex - b.lastTouched) / HEAT_COMMITS);
+      const cool = coolnessAt(this.commitIndex, b.lastTouched);
       _tint.copy(COLOR_BASE).lerp(COLOR_HOT, HEAT_TINT * (1 - cool)).multiplyScalar(b.shade);
       for (const p of b.parts) p.material.color.copy(_tint);
     }
