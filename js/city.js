@@ -15,6 +15,7 @@ import {
   cityBounds, boxSize, boxCenter,
 } from './layout.js';
 import { makeFacade, makeRoofTexture, FACADE_STYLES, WINDOW_TILE_UNITS } from './textures.js';
+import { LANDMARK_COUNT, allPaths, landmarks, peakOfAll } from './history.js';
 
 export * from './layout.js';
 
@@ -51,7 +52,7 @@ const PODIUM_HEIGHT = 12;
 const TAPER_RATIO = 0.85;
 const SEGMENT_SPLIT = [0.46, 0.32, 0.22];
 
-const SPIRE_COUNT = 3;   // spires go on the tallest few, as landmarks
+const SPIRE_COUNT = LANDMARK_COUNT;   // spires go on the tallest few, as landmarks
 
 const _tint = new THREE.Color();
 
@@ -120,44 +121,16 @@ export class City {
    * whole run, so the framing and the street grid stay still.
    */
   planFor(commits) {
-    const all = new Set();
-    const peak = new Map();
-
-    for (const commit of commits) {
-      for (const file of commit.files || []) {
-        if (!file.path) continue;
-        all.add(file.path);
-        if (file.status !== 'removed') {
-          peak.set(file.path, Math.max(peak.get(file.path) || 0, file.lines || 0));
-        }
-      }
-    }
-
-    this.plan = layout([...all]);
+    this.plan = layout(allPaths(commits));
     this.districtCount = this.plan.districts.length;
-
-    // Landmarks are chosen from the whole history, not from the current frame,
-    // so a spire does not sprout and vanish as files are edited.
-    this._landmarks = new Set(
-      [...peak.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, SPIRE_COUNT)
-        .map(([path]) => path)
-    );
-
+    this._landmarks = landmarks(commits, SPIRE_COUNT);
     this._buildFoundations();
     return this.plan;
   }
 
   /** The tallest building this dataset will ever produce. */
   plannedHeight(commits) {
-    let lines = 0;
-    for (const commit of commits) {
-      for (const file of commit.files || []) {
-        if (file.status !== 'removed' && file.lines > lines) lines = file.lines;
-      }
-    }
-    return heightForLines(lines);
+    return heightForLines(peakOfAll(commits));
   }
 
   _buildFoundations() {
