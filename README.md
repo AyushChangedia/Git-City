@@ -355,17 +355,35 @@ Nothing to install first. The suite runs on Node's built-in test runner, so the
 project keeps its no-build-step, no-install promise the whole way through —
 `package.json` has no dependencies at all, dev ones included.
 
-What is covered is the part with no visible failure mode: the pure geometry in
-`js/layout.js`, the camera fit across city shapes and window aspects, the commit
-replay in `scripts/fetch-history.cjs`, the REST paging and error handling in
-`js/github.js`, and `scripts/verify.cjs` driven as a subprocess the way CI runs
-it. A wrong number in any of those does not throw — it renders a city that is
-quietly the wrong shape, which is the kind of bug nobody notices.
+What is covered is the part with no visible failure mode. A wrong number in any
+of it does not throw — it renders a city that is quietly the wrong shape, which
+is the kind of bug nobody notices.
 
-The renderer itself is not unit-tested. Covering `js/city.js` or `js/world.js`
-would mean a headless WebGL context and screenshot diffs, a much larger
-commitment than this project warrants. `npm run verify` checks the numbers
-those modules are handed instead.
+The project is split so that as much of that as possible can be run. Seven
+modules import nothing but each other, and every one of them was at some point
+a private function inside a file that needs a WebGL context:
+
+| module | what it decides |
+| --- | --- |
+| `js/layout.js` | districts, plot positions, camera fit, haze, sun direction |
+| `js/history.js` | which files will exist, which are landmarks, how tall the city gets |
+| `js/variation.js` | each building's width, facade, shade, podium, tiers, heat |
+| `js/stack.js` | how a height divides between a building's boxes, and the tween |
+| `js/streets.js` | where the roads go, how far the horizon reaches, lamp spacing |
+| `js/random.js` | the seeded generator all of the above draw from |
+| `js/timeline.js` | playback state |
+
+Also covered: the commit replay in `scripts/fetch-history.cjs`, the REST paging
+and rate-limit handling in `js/github.js`, and `scripts/verify.cjs` driven as a
+subprocess the way CI runs it.
+
+The renderer itself is not unit-tested. Covering what is left of `js/city.js`,
+`js/world.js` and `js/main.js` would mean a headless WebGL context and
+screenshot diffs, a much larger commitment than this project warrants. Two
+cheaper checks stand in: `tests/modules.test.mjs` parses all three with
+`node --check` and resolves their imports, which catches the syntax and binding
+mistakes that editing them actually produces; and `npm run verify` checks the
+numbers they are handed.
 
 CI runs both checks on every push and pull request, on Node 22 and 24.
 
@@ -392,12 +410,17 @@ does not interfere.
 index.html                 markup + the three.js import map
 css/style.css              all styling
 js/main.js                 bootstrap, renderer, post-processing, camera, DOM wiring
-js/layout.js               pure geometry — districts, positions, camera fit
 js/city.js                 building meshes, materials, tweens, lifecycle
 js/world.js                sun, sky, water, island, roads, streetlights, fog
 js/textures.js             canvas-generated window and water-normal textures
-js/timeline.js             playback state machine
 js/github.js               dataset loading, live API, rate-limit handling
+js/layout.js               pure — districts, positions, camera fit, haze, sun
+js/history.js              pure — what the commit stream says before frame 0
+js/variation.js            pure — how one building differs from its neighbour
+js/stack.js                pure — the box stack, and the tween curve
+js/streets.js              pure — the gaps the districts leave behind
+js/random.js               pure — one seeded generator
+js/timeline.js             pure — playback state machine
 assets/waternormals.jpg    water normal map (three.js, MIT) — committed, not hotlinked
 data/*.json                pre-generated commit data
 data/manifest.json         which datasets appear in the dropdown
@@ -407,8 +430,13 @@ tests/*.test.mjs           unit suite, node:test, no dependencies
 .github/workflows/ci.yml   runs both checks on push and pull request
 ```
 
-`js/layout.js` exists so the geometry can be verified in Node without a
-renderer; `js/city.js` re-exports it, so it is a single import either way.
+The modules marked pure import nothing outside that group — no three.js, no
+DOM — which is what lets the suite run them in Node. `js/city.js` re-exports
+`js/layout.js`, so the geometry is a single import either way.
+
+The division is not tidiness. Everything in those files was once a private
+function inside the renderer, where a wrong constant could only be found by
+opening a browser and looking at the city carefully enough to notice.
 
 ## Not in v1
 

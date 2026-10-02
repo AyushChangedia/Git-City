@@ -11,15 +11,21 @@
 
 import * as THREE from 'three';
 import {
-  FOOTPRINT, HEIGHT_MIN, TAPER_HEIGHT, heightForLines, layout,
+  FOOTPRINT, HEIGHT_MIN, heightForLines, layout,
   cityBounds, boxSize, boxCenter,
 } from './layout.js';
 import { makeFacade, makeRoofTexture, FACADE_STYLES, WINDOW_TILE_UNITS } from './textures.js';
+import { LANDMARK_COUNT, allPaths, landmarks, peakOfAll } from './history.js';
+import {
+  coolnessAt, hashOf, podiumWidthFor, shadeFor, shapeFor, styleFor, widthFor,
+} from './variation.js';
+import {
+  SPIRE_FRACTION, at, boxesFor, progress, topOf,
+} from './stack.js';
 
 export * from './layout.js';
 
 const TWEEN_MS = 300;
-const HEAT_COMMITS = 20;
 
 const COLOR_HOT = new THREE.Color('#ff6b35');
 const COLOR_BASE = new THREE.Color('#4a5568');
@@ -32,41 +38,11 @@ const FOUNDATION_HEIGHT = 0.12;
 const EMISSIVE_WINDOW = new THREE.Color('#ffd9a0');
 const WINDOW_EMISSIVE_INTENSITY = 1.0;
 
-/**
- * Buildings vary in width within their plot. A block of identical squares on a
- * regular grid reads as a chart however it is textured; real streets have gaps
- * of different sizes. The plot itself never changes — this only decides how
- * much of it the building fills.
- */
-const WIDTH_MIN = 0.74;
-const WIDTH_RANGE = 0.26;
 
-/** Above this a building gets a podium: a wider two-or-three storey base. */
-const PODIUM_HEIGHT = 12;
-
-/**
- * A tall building is three boxes, each 85% the width of the one below.
- * A single extruded box is a bar; a setback taper is a tower.
- */
-const TAPER_RATIO = 0.85;
-const SEGMENT_SPLIT = [0.46, 0.32, 0.22];
-
-const SPIRE_COUNT = 3;   // spires go on the tallest few, as landmarks
+const SPIRE_COUNT = LANDMARK_COUNT;   // spires go on the tallest few, as landmarks
 
 const _tint = new THREE.Color();
 
-const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
-const clamp01 = (t) => (t < 0 ? 0 : t > 1 ? 1 : t);
-
-/** Stable per-path hash, so a building looks the same on every reload. */
-function hashOf(path) {
-  let h = 2166136261;
-  for (let i = 0; i < path.length; i++) {
-    h ^= path.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
 
 export class City {
   constructor() {
@@ -120,44 +96,16 @@ export class City {
    * whole run, so the framing and the street grid stay still.
    */
   planFor(commits) {
-    const all = new Set();
-    const peak = new Map();
-
-    for (const commit of commits) {
-      for (const file of commit.files || []) {
-        if (!file.path) continue;
-        all.add(file.path);
-        if (file.status !== 'removed') {
-          peak.set(file.path, Math.max(peak.get(file.path) || 0, file.lines || 0));
-        }
-      }
-    }
-
-    this.plan = layout([...all]);
+    this.plan = layout(allPaths(commits));
     this.districtCount = this.plan.districts.length;
-
-    // Landmarks are chosen from the whole history, not from the current frame,
-    // so a spire does not sprout and vanish as files are edited.
-    this._landmarks = new Set(
-      [...peak.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, SPIRE_COUNT)
-        .map(([path]) => path)
-    );
-
+    this._landmarks = landmarks(commits, SPIRE_COUNT);
     this._buildFoundations();
     return this.plan;
   }
 
   /** The tallest building this dataset will ever produce. */
   plannedHeight(commits) {
-    let lines = 0;
-    for (const commit of commits) {
-      for (const file of commit.files || []) {
-        if (file.status !== 'removed' && file.lines > lines) lines = file.lines;
-      }
-    }
-    return heightForLines(lines);
+    return heightForLines(peakOfAll(commits));
   }
 
   _buildFoundations() {
@@ -269,16 +217,16 @@ export class City {
       let settled = true;
 
       if (b.hStart !== null) {
-        const e = easeOutCubic(clamp01((now - b.hStart) / TWEEN_MS));
-        b.height = b.h0 + (b.h1 - b.h0) * e;
+        const e = progress(now, b.hStart, TWEEN_MS);
+        b.height = at(b.h0, b.h1, e);
         this._shapeTo(b, b.height);
         if (e >= 1) b.hStart = null; else settled = false;
       }
 
       if (b.pStart !== null) {
-        const e = easeOutCubic(clamp01((now - b.pStart) / TWEEN_MS));
-        b.group.position.x = b.px0 + (b.px1 - b.px0) * e;
-        b.group.position.z = b.pz0 + (b.pz1 - b.pz0) * e;
+        const e = progress(now, b.pStart, TWEEN_MS);
+        b.group.position.x = at(b.px0, b.px1, e);
+        b.group.position.z = at(b.pz0, b.pz1, e);
         if (e >= 1) b.pStart = null; else settled = false;
       }
 
@@ -393,11 +341,11 @@ export class City {
 
     const b = {
       path, group, hash,
-      style: hash % FACADE_STYLES.length,
+      style: styleFor(hash, FACADE_STYLES.length),
       // How much of its 3x3 plot this building fills, and how much wider its
       // podium is. Both fixed per path, so a file always looks like itself.
-      width: FOOTPRINT * (WIDTH_MIN + ((hash >>> 4) % 1000) / 1000 * WIDTH_RANGE),
-      shade: 0.9 + ((hash >>> 14) % 1000) / 1000 * 0.2,
+      width: widthFor(hash),
+      shade: shadeFor(hash),
       parts: [],          // { mesh, material, map, emissiveMap }
       roofBoxes: [],
       spire: null,
@@ -410,7 +358,7 @@ export class City {
       dying: false,
       placed: false,
     };
-    b.podiumWidth = Math.min(FOOTPRINT, b.width * 1.22);
+    b.podiumWidth = podiumWidthFor(b.width);
 
     this.buildings.set(path, b);
     this.group.add(group);
@@ -438,8 +386,7 @@ export class City {
    * setback tiers on top of that.
    */
   _buildParts(b, targetHeight) {
-    const tiers = targetHeight > TAPER_HEIGHT ? SEGMENT_SPLIT.length : 1;
-    const hasPodium = targetHeight > PODIUM_HEIGHT;
+    const { tiers, hasPodium, parts: partCount } = shapeFor(targetHeight);
     if (tiers === b.tiers && hasPodium === b.hasPodium && b.parts.length) return;
 
     for (const p of b.parts) {
@@ -452,8 +399,7 @@ export class City {
     b.parts = [];
     b.roofBoxes = [];
 
-    const count = tiers + (hasPodium ? 1 : 0);
-    for (let i = 0; i < count; i++) this._addPart(b);
+    for (let i = 0; i < partCount; i++) this._addPart(b);
 
     // Clutter on the low-rise roofs: plant, lift housing, water tanks. Cheap,
     // and it breaks up the flat tops that make a skyline look extruded.
@@ -491,34 +437,20 @@ export class City {
    * storeys stretch as the building grows is the thing that reads as a bar.
    */
   _shapeTo(b, height) {
-    const h = Math.max(height, 1e-4);
-    let i = 0;
-    let y = 0;
-
-    if (b.hasPodium) {
-      const podiumHeight = Math.max(Math.min(h * 0.2, 3.5), 1e-4);
-      this._shapePart(b.parts[i++], b.podiumWidth, podiumHeight, y);
-      y += podiumHeight;
+    const boxes = boxesFor(height, b, b.width, b.podiumWidth);
+    for (const [i, box] of boxes.entries()) {
+      this._shapePart(b.parts[i], box.width, box.height, box.y);
     }
 
-    const shaft = Math.max(h - y, 1e-4);
-    const tiers = b.tiers;
-    for (let t = 0; t < tiers; t++) {
-      const fraction = tiers === 1 ? 1 : SEGMENT_SPLIT[t];
-      const segHeight = Math.max(shaft * fraction, 1e-4);
-      const width = b.width * Math.pow(TAPER_RATIO, t);
-      this._shapePart(b.parts[i++], width, segHeight, y);
-      y += segHeight;
-    }
-
-    for (const mesh of b.roofBoxes) mesh.position.y = h;
+    const roof = topOf(boxes);
+    for (const mesh of b.roofBoxes) mesh.position.y = roof;
 
     if (b.spire) {
-      const spireHeight = Math.max(h * 0.22, 0.001);
+      const spireHeight = Math.max(roof * SPIRE_FRACTION, 0.001);
       b.spire.scale.set(1, spireHeight, 1);
-      b.spire.position.y = h;
-      b.tip.position.y = h + spireHeight;
-      b.tip.scale.setScalar(Math.min(1, h / 20));
+      b.spire.position.y = roof;
+      b.tip.position.y = roof + spireHeight;
+      b.tip.scale.setScalar(Math.min(1, roof / 20));
     }
   }
 
@@ -593,7 +525,7 @@ export class City {
    */
   _refreshHeat() {
     for (const b of this.buildings.values()) {
-      const cool = clamp01((this.commitIndex - b.lastTouched) / HEAT_COMMITS);
+      const cool = coolnessAt(this.commitIndex, b.lastTouched);
       _tint.copy(COLOR_BASE).lerp(COLOR_HOT, HEAT_TINT * (1 - cool)).multiplyScalar(b.shade);
       for (const p of b.parts) p.material.color.copy(_tint);
     }
