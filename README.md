@@ -151,7 +151,7 @@ buildings get correct facades from one draw call.
 
 Bloom thresholds on **linear** radiance, before tone mapping, which is worth
 knowing before picking emissive values: `#ffd9a0` has a linear luminance of
-0.734, so anything below `emissiveIntensity` ≈ 0.98 never crosses the 0.72
+0.734, so anything below `emissiveIntensity` ≈ 0.98 never crosses the 0.71
 threshold and never glows at all.
 
 **Haze** is specified as a density, but the density that looks right depends on
