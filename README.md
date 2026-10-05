@@ -6,7 +6,7 @@ Every file is a building. Every folder is a district. Top-level folders sit on
 opposite banks of a river. A building's height is its line count, its windows
 light up at dusk, and it glows orange the moment a commit touches it, cooling
 back to slate over the next twenty commits. Play it back and you can see 
-codebase grow, sprawl, get refactored, and lose whole neighbourhoods to a
+codebase grow, sprawl, get refactored, and lose whole neighbourhoods to
 delete.
 
 ! [Git City at dusk: the axios repository as a river city, windows lit, haze on the horizon](docs/screenshot.png)
