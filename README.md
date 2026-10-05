@@ -1,6 +1,6 @@
 # Git City
 
-**Paste a GitHub repo URL and watch its history build itself, commit by commit, as a 3D city.**
+**Paste a GitHub repo URL and watch its history build itself, commit by commit, as a 3D city .**
 
 Every file is a building. Every folder is a district. Top-level folders sit on
 opposite banks of a river. A building's height is its line count, its windows
