@@ -105,7 +105,7 @@ data either. A still city reads as a model; a moving one reads as a place.
 
 ### Look and lighting
 
-The scene is lit by a single sun vector, computed once at 2° elevation and 175°
+The scene is lit by single sun vector, computed once at 2° elevation and 175°
 azimuth and shared by the sky shader, the directional light and the water's
 specular highlight. If those three disagree the image reads as wrong without it
 being obvious why, so there is exactly one of them.
